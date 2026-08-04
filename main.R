@@ -42,7 +42,7 @@ if ("--ayuda" %in% args_usuario || "-h" %in% args_usuario) {
     "  Rscript main.R                         Abre la interfaz local",
     "  Rscript main.R --automatico            Genera con el Excel de prueba",
     "  Rscript main.R --automatico EXCEL [PLANTILLA] [SALIDAS]",
-    "  Google personal es opcional y se configura desde la interfaz.",
+    "  La interfaz solicita la cuenta y usa automáticamente Drive y Sheets.",
     sep = "\n"
   ), "\n")
   quit(save = "no", status = 0L)
@@ -79,10 +79,10 @@ if (modo_ui) {
 
     duracion <- round(as.numeric(difftime(Sys.time(), inicio, units = "secs")), 1)
     entorno$registrar("Resultado local", "Completado", paste("Ejecución", entorno$id_ejecucion))
-    entorno$registrar("Duración", "Completado", paste(duracion, "segundos"))
+    entorno$registrar("Duración local", "Completado", paste(duracion, "segundos"))
 
     source(file.path(raiz, "google_api.R"), local = entorno, encoding = "UTF-8")
-    entorno$respaldar_google(
+    resultado_google <- entorno$respaldar_google(
       archivo_excel = entorno$archivo_excel,
       salida_word = entorno$salida_word,
       carpeta_ejecucion = entorno$carpeta_ejecucion,
@@ -93,9 +93,27 @@ if (modo_ui) {
       asegurar_paquetes = asegurar_paquetes
     )
 
-    message("\nPROCESO COMPLETADO")
-    message("Word: ", normalizePath(entorno$salida_word))
-    message("Salida: ", normalizePath(entorno$carpeta_ejecucion))
+    duracion_total <- round(as.numeric(difftime(Sys.time(), inicio, units = "secs")), 1)
+    entorno$registrar("Duración total", "Completado", paste(duracion_total, "segundos"))
+
+    mostrar_enlace <- function(etiqueta, valor) {
+      if (!is.null(valor) && length(valor) == 1 && !is.na(valor) && nzchar(valor)) {
+        message(etiqueta, ": ", valor)
+      }
+    }
+    message("\n================ RESULTADO ================")
+    message("Excel local: ", normalizePath(entorno$archivo_excel))
+    message("Word local: ", normalizePath(entorno$salida_word))
+    message("Carpeta local: ", normalizePath(entorno$carpeta_ejecucion))
+    mostrar_enlace("Excel en Drive", resultado_google$excel_drive)
+    mostrar_enlace("Word en Drive", resultado_google$word_drive)
+    mostrar_enlace("Carpeta Drive", resultado_google$carpeta)
+    mostrar_enlace("Google Sheets", resultado_google$sheets)
+    if (!isTRUE(resultado_google$ok) && !isTRUE(resultado_google$omitido)) {
+      message("Google: no se completó; la salida local permanece disponible.")
+    }
+    message("Estado: PROCESO COMPLETADO")
+    message("===========================================")
   }, error = function(e) {
     estado <<- 1L
     detalle <- conditionMessage(e)
