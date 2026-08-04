@@ -1,0 +1,8 @@
+.Rhistory
+.RData
+.Renviron
+.Rproj.user/
+salidas/*
+!salidas/LEEME.txt
+*.json
+credenciales/

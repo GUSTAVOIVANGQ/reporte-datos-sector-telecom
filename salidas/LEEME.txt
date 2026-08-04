@@ -1,1 +1,3 @@
-Esta carpeta recibirá una subcarpeta nueva por cada ejecución del programa.
+Los resultados se crean aquí, dentro de una carpeta nueva por ejecución.
+Puede eliminar ejecuciones anteriores sin afectar el programa.
+Si Google está activo, enlaces_google.txt mostrará los accesos creados.

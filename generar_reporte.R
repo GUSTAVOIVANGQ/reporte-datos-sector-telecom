@@ -1,5 +1,6 @@
 #!/usr/bin/env Rscript
 
+# Motor interno. El punto de entrada público del proyecto es main.R.
 # Automatiza el reporte sin sobrescribir el Excel ni la plantilla Word.
 paquetes <- c("readxl", "xml2", "zip")
 faltan <- paquetes[!vapply(paquetes, requireNamespace, logical(1), quietly = TRUE)]
@@ -12,7 +13,8 @@ args_full <- commandArgs(trailingOnly = FALSE)
 archivo_arg <- sub("^--file=", "", args_full[grepl("^--file=", args_full)])
 raiz <- if (length(archivo_arg)) dirname(normalizePath(archivo_arg[1])) else getwd()
 args <- commandArgs(trailingOnly = TRUE)
-archivo_excel <- if (length(args) >= 1) args[1] else file.path(raiz, "entrada", "Entrada_Reporte_Telecom_2025Q4.xlsx")
+args <- args[!args %in% c("--automatico", "--ui")]
+archivo_excel <- if (length(args) >= 1) args[1] else file.path(raiz, "entrada", "Entrada_Reporte_Telecom_PRUEBA.xlsx")
 archivo_plantilla <- if (length(args) >= 2) args[2] else file.path(raiz, "plantilla", "Plantilla_Reporte_Telecom_Automatizable.docx")
 carpeta_salidas <- if (length(args) >= 3) args[3] else file.path(raiz, "salidas")
 
@@ -36,17 +38,63 @@ numero <- function(x) suppressWarnings(as.numeric(x))
 fmt_entero <- function(x) formatC(numero(x), format = "f", digits = 0, big.mark = ",")
 fmt_decimal <- function(x) formatC(numero(x), format = "f", digits = 2, big.mark = ",")
 
+validar_parametros <- function(param) {
+  requeridos <- c(
+    "periodo_codigo", "trimestre_numero", "anio", "periodo_texto",
+    "periodo_portada", "version"
+  )
+  faltantes <- setdiff(requeridos, names(param))
+  if (length(faltantes)) stop("Faltan parámetros: ", paste(faltantes, collapse = ", "))
+  if (!grepl("^[0-9]{4}Q[1-4]$", param[["periodo_codigo"]])) {
+    stop("periodo_codigo debe tener formato AAAAQN; ejemplo: 2026Q1")
+  }
+  trimestre <- numero(param[["trimestre_numero"]])
+  anio <- numero(param[["anio"]])
+  if (!trimestre %in% 1:4 || is.na(anio) || anio < 2000) stop("Trimestre o año inválido")
+  esperado <- paste0(as.integer(anio), "Q", as.integer(trimestre))
+  if (!identical(param[["periodo_codigo"]], esperado)) {
+    stop("periodo_codigo no coincide con trimestre_numero y anio: se esperaba ", esperado)
+  }
+  if (!grepl("^[A-Za-z0-9_-]+$", param[["version"]])) {
+    stop("version contiene caracteres no permitidos para un nombre de archivo")
+  }
+}
+
 validar_entrada <- function(tablas) {
   filas <- c(6, 6, 20, 12, 11, 9)
   columnas <- c(4, 4, 5, 5, 5, 5)
+  grupos_requeridos <- list(
+    c("América Móvil", "AT&T", "Telefónica", "Grupo Walmart", "Otros"),
+    c("América Móvil", "AT&T", "Telefónica", "Grupo Walmart", "Otros"),
+    c("América Móvil", "AT&T", "Grupo Televisa", "Megacable-MCM", "Grupo Salinas",
+      "Telefónica", "Grupo Walmart", "Axtel", "Altán", "Otros"),
+    c("América Móvil", "Grupo Televisa", "Megacable-MCM", "Grupo Salinas", "Otros"),
+    c("América Móvil", "Grupo Televisa", "Megacable-MCM", "Grupo Salinas", "Otros"),
+    c("Grupo Televisa", "Megacable-MCM", "Grupo Salinas", "Dish", "Otros")
+  )
   for (i in 1:6) {
     if (nrow(tablas[[i]]) != filas[i] || ncol(tablas[[i]]) != columnas[i]) {
       stop(sprintf("Tabla_%d cambió de estructura: se esperaba %dx%d y se recibió %dx%d.",
                    i, filas[i], columnas[i], nrow(tablas[[i]]), ncol(tablas[[i]])))
     }
-    total <- numero(tablas[[i]][nrow(tablas[[i]]), ncol(tablas[[i]])])
-    detalle <- sum(numero(tablas[[i]][-nrow(tablas[[i]]), ncol(tablas[[i]])]), na.rm = TRUE)
+    grupos <- trimws(as.character(tablas[[i]][[1]]))
+    faltantes <- setdiff(grupos_requeridos[[i]], grupos)
+    if (length(faltantes)) stop("Faltan grupos en Tabla_", i, ": ", paste(faltantes, collapse = ", "))
+    valores <- numero(tablas[[i]][[ncol(tablas[[i]])]])
+    if (any(is.na(valores)) || any(valores < 0)) stop("Hay valores vacíos o negativos en Tabla_", i)
+    total <- valores[nrow(tablas[[i]])]
+    detalle <- sum(valores[-nrow(tablas[[i]])])
     if (abs(total - detalle) > 0.01) stop("El TOTAL no concilia en Tabla_", i)
+    if (i >= 3) {
+      for (grupo in setdiff(unique(grupos), c("Otros", "TOTAL"))) {
+        filas_grupo <- grupos == grupo
+        total_gie <- unique(numero(tablas[[i]][filas_grupo, 2]))
+        total_gie <- total_gie[!is.na(total_gie)]
+        if (length(total_gie) != 1 || abs(total_gie - sum(valores[filas_grupo])) > 0.01) {
+          stop("El total por GIE no concilia para ", grupo, " en Tabla_", i)
+        }
+      }
+    }
   }
 }
 
@@ -354,6 +402,7 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas) {
 
 param <- leer_parametros(archivo_excel)
 tablas <- leer_tablas(archivo_excel)
+validar_parametros(param)
 validar_entrada(tablas)
 datos <- lapply(1:6, function(i) datos_seccion(tablas[[i]], i))
 
@@ -364,16 +413,24 @@ carpeta_monitoreo <- file.path(carpeta_ejecucion, "monitoreo")
 dir.create(carpeta_monitoreo, recursive = TRUE, showWarnings = FALSE)
 
 control <- data.frame(Etapa = character(), Estado = character(), Fecha = character(), Detalle = character())
+ruta_log <- file.path(carpeta_ejecucion, "ejecucion.log")
 registrar <- function(etapa, estado, detalle) {
+  fecha <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
   control <<- rbind(control, data.frame(
-    Etapa = etapa, Estado = estado, Fecha = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+    Etapa = etapa, Estado = estado, Fecha = fecha,
     Detalle = detalle, stringsAsFactors = FALSE
   ))
   utils::write.csv(control, file.path(carpeta_ejecucion, "control_ejecucion.csv"),
                    row.names = FALSE, fileEncoding = "UTF-8")
+  linea <- sprintf("[%s] [%s] %s - %s", fecha, estado, etapa, detalle)
+  write(linea, file = ruta_log, append = TRUE)
+  message(linea)
 }
 
-registrar("Entrada", "Completado", "Excel leído; estructuras y totales conciliados")
+registrar("Inicio", "Completado", paste("Ejecución", id_ejecucion))
+registrar("Entrada", "Completado", paste(
+  "Excel leído; estructuras y totales conciliados:", normalizePath(archivo_excel)
+))
 for (i in 1:6) {
   utils::write.csv(tablas[[i]], file.path(carpeta_monitoreo, paste0("tabla_", i, ".csv")),
                    row.names = FALSE, na = "", fileEncoding = "UTF-8")
@@ -384,25 +441,9 @@ rutas_graficas <- file.path(carpeta_monitoreo, paste0("grafica_", 1:6, ".png"))
 for (i in 1:6) guardar_grafica(datos[[i]], i, rutas_graficas[i])
 registrar("Gráficas", "Completado", "Seis PNG creados desde las tablas")
 
-carpeta_drive <- Sys.getenv("REPORTE_DRIVE", "")
-if (nzchar(carpeta_drive)) {
-  destino_drive <- file.path(carpeta_drive, id_ejecucion, "monitoreo")
-  dir.create(destino_drive, recursive = TRUE, showWarnings = FALSE)
-  copiados <- file.copy(list.files(carpeta_monitoreo, full.names = TRUE), destino_drive)
-  if (!all(copiados)) stop("No fue posible copiar todo el monitoreo a Google Drive")
-  registrar("Drive", "Completado", paste("Copias guardadas en", destino_drive))
-} else {
-  registrar("Drive", "Local", "Defina REPORTE_DRIVE para copiar a una carpeta sincronizada")
-}
-
 salida_word <- file.path(
   carpeta_ejecucion,
   paste0("Reporte_Telecomunicaciones_", param[["periodo_codigo"]], "_", param[["version"]], ".docx")
 )
 actualizar_word(archivo_plantilla, salida_word, tablas, valores_texto(param, tablas, datos), rutas_graficas)
 registrar("Word", "Completado", basename(salida_word))
-registrar("Resultado", "Completado", paste("Ejecución", id_ejecucion))
-
-message("Proceso terminado.")
-message("Word: ", normalizePath(salida_word))
-message("Monitoreo: ", normalizePath(carpeta_monitoreo))

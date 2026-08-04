@@ -1,53 +1,117 @@
-# Automatización del Reporte de Telecomunicaciones
+# Reporte de datos del sector de telecomunicaciones — v1.1.0
 
-Este proyecto toma el Excel procesado, crea primero seis copias CSV y seis gráficas PNG de monitoreo y después genera una copia actualizada de la plantilla Word. Nunca sobrescribe los archivos de entrada. Las gráficas conservan la composición, paleta, márgenes y tamaño tipográfico del documento de referencia.
+Aplicación en R que genera el reporte Word, seis gráficas PNG, seis copias CSV, un control de ejecución y, de forma opcional, un respaldo en Google Drive con una copia de las tablas en Google Sheets.
 
-## Primera ejecución
+El Excel incluido contiene datos ficticios del primer trimestre de 2026. La plantilla Word y el diseño de las gráficas conservan la versión previamente validada.
+
+## Uso normal
 
 1. Instale R 4.3 o superior.
-2. Abra una terminal dentro de esta carpeta.
-3. Ejecute `Rscript instalar_paquetes.R` una sola vez.
-4. Ejecute `Rscript generar_reporte.R` o, en Windows, abra `ejecutar_reporte.bat`.
+2. Abra una terminal en esta carpeta.
+3. Ejecute una sola línea:
 
-Los resultados se guardan en una carpeta nueva dentro de `salidas/`, con fecha y hora. Cada ejecución contiene:
+~~~bash
+Rscript main.R
+~~~
 
-- `monitoreo/tabla_1.csv` a `tabla_6.csv`.
-- `monitoreo/grafica_1.png` a `grafica_6.png`.
-- `control_ejecucion.csv`.
-- El reporte Word actualizado.
+El programa instala los paquetes faltantes y abre una interfaz local en el navegador. No necesita un archivo .bat.
 
-## Google Drive opcional
+En la pantalla:
 
-Si Google Drive para escritorio está instalado, indique la carpeta local sincronizada antes de ejecutar:
+- Seleccione el Excel del trimestre o deje el campo vacío para usar el Excel ficticio incluido.
+- Confirme la carpeta local de resultados.
+- Abra **Ajustes avanzados** únicamente si necesita cambiar la plantilla o la configuración de Google.
+- Presione **Generar reporte**.
 
-PowerShell:
+La interfaz muestra el estado, el registro de la ejecución y permite descargar el último Word.
 
-```powershell
-$env:REPORTE_DRIVE="G:\Mi unidad\Reportes de Telecomunicaciones"
-Rscript generar_reporte.R
-```
+## Ajustes disponibles
 
-macOS o Linux:
+| Ajuste | Valor inicial | Uso |
+| --- | --- | --- |
+| Excel | entrada/Entrada_Reporte_Telecom_PRUEBA.xlsx | Se usa cuando el usuario no selecciona otro archivo. |
+| Plantilla Word | plantilla/Plantilla_Reporte_Telecom_Automatizable.docx | Mantiene estructura, tablas, textos y posiciones. |
+| Carpeta local | salidas/ | Crea una subcarpeta nueva por ejecución. |
+| Google | Activado en la interfaz | Puede desactivarse sin afectar la generación local. |
+| Llave JSON | C:\Users\gustavo.garcia\Documents\GitHub\reporte-datos-sector-telecom\animated-radar-504520-c3-279497a6262f.json | Puede escribirse la ruta o seleccionar otro JSON; el archivo no se copia al proyecto. |
+| Carpeta de Drive | Reporte_de_Datos_del_Sector_de_Telecomunicaciones | Se busca por nombre exacto. |
+| ID de carpeta | Vacío | Si hay nombres repetidos, el ID identifica la carpeta sin ambigüedad. |
+| Subir archivos | Activado | Sube Excel, Word, PNG, CSV y registros. |
+| Crear Sheets | Activado | Crea Control y Tabla_1 a Tabla_6. |
 
-```bash
-export REPORTE_DRIVE="$HOME/Google Drive/Reportes de Telecomunicaciones"
-Rscript generar_reporte.R
-```
+## Resultados
 
-Las tablas y gráficas se copian a esa carpeta antes de crear el Word. Si no se configura, las copias se conservan solamente en `salidas/.../monitoreo` y el control lo registra como `Local`.
+Cada ejecución crea salidas/AAAAQN_version_fecha/ con:
 
-## Cambiar los archivos de entrada
+- Reporte_Telecomunicaciones_...docx.
+- monitoreo/grafica_1.png a grafica_6.png.
+- monitoreo/tabla_1.csv a tabla_6.csv.
+- control_ejecucion.csv.
+- ejecucion.log.
+- enlaces_google.txt, únicamente cuando Google responde correctamente.
 
-La forma normal es reemplazar el Excel de `entrada/` manteniendo el mismo nombre y estructura. También pueden pasarse rutas distintas:
+La generación local ocurre primero. Si Google está desactivado, no está configurado o presenta un error, el Word y los archivos locales se conservan; el problema queda registrado como advertencia.
 
-```bash
-Rscript generar_reporte.R ruta/entrada.xlsx ruta/plantilla.docx ruta/salidas
-```
+## Google Drive y Sheets
 
-No cambie los nombres de las hojas ni las dimensiones de las seis tablas. El script se detiene si la estructura o los totales no coinciden.
+La integración usa una cuenta de servicio, por lo que no solicita la cuenta personal del usuario.
 
-El proceso también se detiene si el XML contiene texto con codificación inválida o si el DOCX queda con archivos duplicados o sin sus carpetas internas. El empaquetado usa explícitamente el modo `mirror` para conservar rutas como `word/document.xml`. Esto evita producir documentos que Word no pueda abrir.
+Configuración necesaria:
 
-## Revisión final
+1. Active **Google Drive API** y **Google Sheets API** en el proyecto de Google Cloud.
+2. Conserve la llave JSON fuera del repositorio y del ZIP.
+3. En Google Workspace, cree o elija una carpeta dentro de una **unidad compartida**.
+4. Agregue como miembro de la unidad compartida el correo client_email de la cuenta de servicio y otorgue permiso para agregar archivos.
+5. Use en la interfaz el nombre exacto de la carpeta o, de preferencia, su ID.
 
-Abra el Word generado y confirme que conserva 19 páginas. Revise especialmente tablas extensas, saltos de página y las seis gráficas antes de publicar el reporte.
+Si la búsqueda por nombre encuentra más de una carpeta, el programa no adivina: solicita configurar el ID. El ID es el texto de la URL situado después de /folders/.
+
+El libro creado en cada ejecución contiene:
+
+- Control: etapas, estado, fecha y detalle.
+- Tabla_1 a Tabla_6: copias de monitoreo de las tablas procesadas.
+
+## Modo automático para otro programador
+
+Sin abrir la interfaz:
+
+~~~bash
+Rscript main.R --automatico
+~~~
+
+Con rutas personalizadas:
+
+~~~bash
+Rscript main.R --automatico "ruta/datos.xlsx" "ruta/plantilla.docx" "ruta/salidas"
+~~~
+
+Las opciones de Google también pueden definirse como variables de entorno:
+
+- GOOGLE_ENABLED
+- GOOGLE_APPLICATION_CREDENTIALS
+- GOOGLE_DRIVE_FOLDER_NAME
+- GOOGLE_DRIVE_FOLDER_ID
+- GOOGLE_UPLOAD_FILES
+- GOOGLE_CREATE_SHEETS
+
+Los valores lógicos aceptan true o false.
+
+## Archivos esenciales
+
+- main.R: único punto de entrada y selección entre interfaz/modo automático.
+- app.R: interfaz local.
+- generar_reporte.R: validación, gráficas y actualización del Word.
+- google_api.R: Drive y Sheets opcionales.
+- entrada/: Excel ficticio predeterminado.
+- plantilla/: plantilla Word automatizable.
+- salidas/: resultados locales.
+
+## Lista de verificación para la entrega
+
+- Ejecutar Rscript main.R en la computadora de demostración.
+- Generar una vez con el Excel ficticio.
+- Abrir el Word y revisar las 19 páginas.
+- Confirmar seis PNG y seis CSV.
+- Si se demostrará Google, comprobar previamente que la cuenta de servicio vea la carpeta compartida.
+- Verificar que el Sheet tenga siete pestañas: Control y Tabla_1 a Tabla_6.
+- No entregar ni publicar la llave JSON.
