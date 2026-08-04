@@ -4,6 +4,21 @@ Aplicación en R para generar el reporte Word y respaldar automáticamente la ej
 
 El Word local es el resultado obligatorio. Si Google no está disponible, el reporte, las gráficas, las tablas y los controles locales permanecen completos.
 
+## Contenido
+
+- [Flujo general](#flujo-general)
+- [Requisitos](#requisitos)
+- [Ejecutar](#ejecutar)
+- [Interfaz](#interfaz)
+- [Capturas](#capturas)
+- [Drive y Sheets automáticos](#drive-y-sheets-automáticos)
+- [Información mostrada en terminal](#información-mostrada-en-terminal)
+- [Resultados locales](#resultados-locales)
+- [Modo automático](#modo-automático)
+- [Archivos esenciales](#archivos-esenciales)
+- [Historial de cambios](#historial-de-cambios)
+- [Autor](#autor)
+
 ## Flujo general
 
 ```mermaid
@@ -20,6 +35,14 @@ flowchart TD
     H --> J["Mostrar resultado"]
     I --> J
 ```
+
+## Requisitos
+
+- R 4.1 o superior.
+- Windows, macOS o Linux (el programa detecta el sistema operativo automáticamente, por ejemplo para abrir la carpeta de resultados).
+- Conexión a internet: para instalar paquetes la primera vez y para usar Drive/Sheets.
+- Paquetes de R: `shiny`, `readxl`, `xml2` y `zip` (se instalan automáticamente si faltan); `googledrive` y `googlesheets4` solo si se usa el respaldo en Google.
+- Cuenta personal de Google, únicamente si se quiere el respaldo automático en Drive y Sheets. No es necesaria para generar el Word local.
 
 ## Ejecutar
 
@@ -133,12 +156,19 @@ En modo automático, Google reutiliza una cuenta previamente autorizada. Para de
 - `salidas/`: resultados de cada ejecución.
 - `screenshots/`: capturas usadas en este README.
 
-## Cambios de v1.3.0
+## Historial de cambios
 
-- Interfaz reducida a los campos y acciones esenciales.
-- Eliminación del panel de registros de la interfaz.
-- Drive y Sheets activados y configurados automáticamente.
-- Selección de carpeta de Drive eliminada de la interfaz.
-- Botón para abrir la carpeta local de resultados.
-- Resumen final con rutas y enlaces en la terminal.
-- Registros más descriptivos para autenticación, cargas, archivos y duración.
+El detalle de cada versión está en [CHANGELOG.md](CHANGELOG.md).
+
+## Autor
+
+Proyecto desarrollado para:
+
+- Dirección Ejecutiva de Indicadores (DEI)
+
+Desarrolladores:
+
+- Gustavo Ivan Garcia Quiroz
+- Actualizaciones y despliegue en Linux: Equipo de la Dirección Ejecutiva de Indicadores
+
+Contacto: [gustavo.garcia@crt.gob.mx](mailto:gustavo.garcia@crt.gob.mx)
