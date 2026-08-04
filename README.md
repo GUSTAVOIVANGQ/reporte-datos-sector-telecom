@@ -4,6 +4,23 @@ Aplicación en R para generar el reporte Word y respaldar automáticamente la ej
 
 El Word local es el resultado obligatorio. Si Google no está disponible, el reporte, las gráficas, las tablas y los controles locales permanecen completos.
 
+## Flujo general
+
+```mermaid
+flowchart TD
+    A["Abrir programa"] --> B{"¿Seleccionó Excel?"}
+    B -- No --> C["Usar Excel 2026Q1 de prueba"]
+    B -- Sí --> D["Usar Excel seleccionado"]
+    C --> E["Validar y generar"]
+    D --> E
+    E --> F["Guardar todo localmente"]
+    F --> G{"¿Drive disponible?"}
+    G -- Sí --> H["Subir resultados"]
+    G -- No --> I["Continuar solo local"]
+    H --> J["Mostrar resultado"]
+    I --> J
+```
+
 ## Ejecutar
 
 Desde una terminal abierta en la carpeta del proyecto:
@@ -32,6 +49,17 @@ La interfaz solo contiene:
 - Botón **Abrir carpeta**.
 
 El registro detallado no aparece en la interfaz; se muestra en la terminal o consola de RStudio.
+
+## Capturas
+
+**Interfaz**
+
+![Interfaz de la aplicación](screenshots/interface.png)
+
+**Reporte generado (Word)**
+
+![Página 1 del reporte generado](screenshots/report_one.png)
+![Página 2 del reporte generado](screenshots/report_two.png)
 
 ## Drive y Sheets automáticos
 
@@ -103,6 +131,7 @@ En modo automático, Google reutiliza una cuenta previamente autorizada. Para de
 - `entrada/`: Excel ficticio predeterminado.
 - `plantilla/`: plantilla Word automatizable.
 - `salidas/`: resultados de cada ejecución.
+- `screenshots/`: capturas usadas en este README.
 
 ## Cambios de v1.3.0
 
