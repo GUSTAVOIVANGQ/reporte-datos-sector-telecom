@@ -1,0 +1,7 @@
+"Etapa","Estado","Fecha","Detalle"
+"Entrada","Completado","2026-08-04 12:34:58","Excel leído; estructuras y totales conciliados"
+"Tablas","Completado","2026-08-04 12:34:58","Seis copias CSV creadas antes del Word"
+"Gráficas","Completado","2026-08-04 12:34:59","Seis PNG creados desde las tablas"
+"Drive","Local","2026-08-04 12:34:59","Defina REPORTE_DRIVE para copiar a una carpeta sincronizada"
+"Word","Completado","2026-08-04 12:35:00","Reporte_Telecomunicaciones_2025Q4_v001.docx"
+"Resultado","Completado","2026-08-04 12:35:01","Ejecución 2025Q4_v001_20260804_123458"
