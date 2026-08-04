@@ -1,8 +1,8 @@
-# Respaldo opcional y no interactivo con una cuenta de servicio.
+# Respaldo opcional mediante OAuth con una cuenta personal de Google.
 respaldar_google <- function(archivo_excel, salida_word, carpeta_ejecucion,
                              carpeta_monitoreo, id_ejecucion, tablas,
                              registrar, asegurar_paquetes) {
-  credencial <- trimws(Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""))
+  correo <- trimws(Sys.getenv("GOOGLE_USER_EMAIL", ""))
   carpeta_id <- trimws(Sys.getenv("GOOGLE_DRIVE_FOLDER_ID", ""))
   carpeta_nombre <- trimws(Sys.getenv("GOOGLE_DRIVE_FOLDER_NAME", ""))
 
@@ -10,26 +10,17 @@ respaldar_google <- function(archivo_excel, salida_word, carpeta_ejecucion,
     valor_defecto <- if (defecto) "true" else "false"
     tolower(trimws(Sys.getenv(nombre, valor_defecto))) %in% c("1", "true", "si", "sí", "yes")
   }
-  configuracion_detectada <- nzchar(credencial) && (nzchar(carpeta_id) || nzchar(carpeta_nombre))
-  google_activo <- variable_logica("GOOGLE_ENABLED", configuracion_detectada)
+  google_activo <- variable_logica("GOOGLE_ENABLED", FALSE)
   subir_archivos <- variable_logica("GOOGLE_UPLOAD_FILES", TRUE)
   crear_sheets <- variable_logica("GOOGLE_CREATE_SHEETS", TRUE)
 
   if (!google_activo) {
-    registrar("Google", "Omitido", "Integración desactivada; la salida local está completa")
+    registrar("Google", "Omitido", "Integración opcional desactivada; la salida local está completa")
     return(invisible(list(ok = TRUE, omitido = TRUE)))
   }
   if (!subir_archivos && !crear_sheets) {
     registrar("Google", "Omitido", "No se seleccionó ninguna salida de Google")
     return(invisible(list(ok = TRUE, omitido = TRUE)))
-  }
-  if (!nzchar(credencial)) {
-    registrar("Google", "Advertencia", "Falta la ruta de la llave JSON; se conservó la salida local")
-    return(invisible(list(ok = FALSE, omitido = FALSE)))
-  }
-  if (!file.exists(credencial)) {
-    registrar("Google", "Advertencia", "No se encontró la llave JSON; se conservó la salida local")
-    return(invisible(list(ok = FALSE, omitido = FALSE)))
   }
   if (!nzchar(carpeta_id) && !nzchar(carpeta_nombre)) {
     registrar("Google", "Advertencia", "Falta el nombre o el ID de la carpeta; se conservó la salida local")
@@ -40,9 +31,7 @@ respaldar_google <- function(archivo_excel, salida_word, carpeta_ejecucion,
     return(invisible(list(ok = FALSE, omitido = FALSE)))
   }
 
-  mensaje_seguro <- function(e) {
-    gsub(credencial, "<credencial>", conditionMessage(e), fixed = TRUE)
-  }
+  mensaje_seguro <- function(e) conditionMessage(e)
   preparar_tabla <- function(x) {
     x <- as.data.frame(x, check.names = FALSE, stringsAsFactors = FALSE)
     nombres <- names(x)
@@ -65,10 +54,12 @@ respaldar_google <- function(archivo_excel, salida_word, carpeta_ejecucion,
     )
     candidatos <- candidatos[trimws(candidatos$name) == carpeta_nombre, , drop = FALSE]
     if (!nrow(candidatos)) {
-      stop(
-        "No se encontró la carpeta '", carpeta_nombre,
-        "'. Compártala con la cuenta de servicio o indique su ID."
+      creada <- googledrive::drive_mkdir(carpeta_nombre, overwrite = FALSE)
+      registrar(
+        "Carpeta Google", "Completado",
+        paste("Carpeta creada en Mi unidad:", carpeta_nombre)
       )
+      return(creada)
     }
     if (nrow(candidatos) > 1) {
       stop(
@@ -81,11 +72,20 @@ respaldar_google <- function(archivo_excel, salida_word, carpeta_ejecucion,
 
   resultado <- tryCatch({
     options(googledrive_quiet = TRUE, googlesheets4_quiet = TRUE)
+    objetivo <- if (nzchar(correo)) correo else TRUE
+    alcances_google <- c(
+      "https://www.googleapis.com/auth/drive",
+      "https://www.googleapis.com/auth/spreadsheets"
+    )
     googledrive::drive_auth(
-      path = credencial,
-      scopes = "https://www.googleapis.com/auth/drive"
+      email = objetivo, scopes = alcances_google, cache = TRUE
     )
     googlesheets4::gs4_auth(token = googledrive::drive_token())
+    googledrive::drive_find(n_max = 1)
+    registrar(
+      "Cuenta Google", "Completado",
+      "OAuth personal autorizado y permisos de Drive verificados"
+    )
 
     destino_base <- localizar_destino()
     destino <- googledrive::drive_mkdir(
@@ -179,9 +179,16 @@ respaldar_google <- function(archivo_excel, salida_word, carpeta_ejecucion,
       sheets = if (length(enlace_sheets)) enlace_sheets else NA_character_
     ))
   }, error = function(e) {
+    detalle <- mensaje_seguro(e)
+    if (grepl("insufficient|403|permission", detalle, ignore.case = TRUE)) {
+      detalle <- paste(
+        "Permisos de Google insuficientes.",
+        "Abra la interfaz y pulse 'Conectar o renovar permisos'."
+      )
+    }
     registrar(
       "Google", "Advertencia",
-      paste(mensaje_seguro(e), "La salida local permanece completa.")
+      paste(detalle, "La salida local permanece completa.")
     )
     invisible(list(ok = FALSE, omitido = FALSE))
   })

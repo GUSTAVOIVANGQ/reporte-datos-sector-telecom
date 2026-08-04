@@ -14,6 +14,7 @@ archivo_arg <- sub("^--file=", "", args_full[grepl("^--file=", args_full)])
 raiz <- if (length(archivo_arg)) dirname(normalizePath(archivo_arg[1])) else getwd()
 args <- commandArgs(trailingOnly = TRUE)
 args <- args[!args %in% c("--automatico", "--ui")]
+args <- args[!grepl("^--google-", args)]
 archivo_excel <- if (length(args) >= 1) args[1] else file.path(raiz, "entrada", "Entrada_Reporte_Telecom_PRUEBA.xlsx")
 archivo_plantilla <- if (length(args) >= 2) args[2] else file.path(raiz, "plantilla", "Plantilla_Reporte_Telecom_Automatizable.docx")
 carpeta_salidas <- if (length(args) >= 3) args[3] else file.path(raiz, "salidas")
@@ -233,7 +234,7 @@ diseno_rectangulos <- function(datos, seccion) {
 ajustar_rotulo <- function(texto, ancho, alto, max_pt = 18, min_pt = 5) {
   palabras <- strsplit(texto, " +")[[1]]
   for (pt in seq(max_pt, min_pt, by = -0.5)) {
-    gp <- grid::gpar(fontsize = pt, fontface = "bold", fontfamily = "Arial", col = "white")
+    gp <- grid::gpar(fontsize = pt, fontface = "bold", fontfamily = "sans", col = "white")
     lineas <- character()
     actual <- ""
     for (palabra in palabras) {
@@ -423,8 +424,10 @@ registrar <- function(etapa, estado, detalle) {
   utils::write.csv(control, file.path(carpeta_ejecucion, "control_ejecucion.csv"),
                    row.names = FALSE, fileEncoding = "UTF-8")
   linea <- sprintf("[%s] [%s] %s - %s", fecha, estado, etapa, detalle)
-  write(linea, file = ruta_log, append = TRUE)
-  message(linea)
+  conexion_log <- file(ruta_log, open = "a", encoding = "UTF-8")
+  on.exit(close(conexion_log), add = TRUE)
+  writeLines(enc2utf8(linea), con = conexion_log, useBytes = TRUE)
+  message(enc2utf8(linea))
 }
 
 registrar("Inicio", "Completado", paste("Ejecución", id_ejecucion))

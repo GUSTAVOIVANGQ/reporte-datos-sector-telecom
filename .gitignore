@@ -1,6 +1,8 @@
 .Rhistory
 .RData
 .Renviron
+.httr-oauth
+.gargle/
 .Rproj.user/
 salidas/*
 !salidas/LEEME.txt

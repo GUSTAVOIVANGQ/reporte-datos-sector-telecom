@@ -4,14 +4,45 @@ options(shiny.maxRequestSize = 50 * 1024^2)
 excel_prueba <- file.path(raiz, "entrada", "Entrada_Reporte_Telecom_PRUEBA.xlsx")
 plantilla_defecto <- file.path(raiz, "plantilla", "Plantilla_Reporte_Telecom_Automatizable.docx")
 salidas_defecto <- file.path(raiz, "salidas")
-json_sugerido <- paste0(
-  "C:\\Users\\gustavo.garcia\\Documents\\GitHub\\",
-  "reporte-datos-sector-telecom\\animated-radar-504520-c3-279497a6262f.json"
+alcances_google <- c(
+  "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/spreadsheets"
 )
 
 valor_logico <- function(nombre, defecto = TRUE) {
   valor <- tolower(trimws(Sys.getenv(nombre, if (defecto) "true" else "false")))
   valor %in% c("1", "true", "si", "sí", "yes")
+}
+
+autenticar_google_personal <- function(correo = "", forzar = FALSE) {
+  if (!exists("asegurar_paquetes", mode = "function") ||
+      !asegurar_paquetes(c("googledrive", "googlesheets4"), obligatorios = FALSE)) {
+    stop("No fue posible instalar los paquetes necesarios para Google")
+  }
+  opciones_previas <- options(
+    rlang_interactive = TRUE,
+    gargle_oauth_cache = TRUE,
+    googledrive_quiet = TRUE,
+    googlesheets4_quiet = TRUE
+  )
+  on.exit(options(opciones_previas), add = TRUE)
+
+  correo <- trimws(correo)
+  if (isTRUE(forzar)) {
+    googlesheets4::gs4_deauth()
+    googledrive::drive_deauth()
+  }
+  objetivo <- if (isTRUE(forzar)) NA else if (nzchar(correo)) correo else TRUE
+  googledrive::drive_auth(
+    email = objetivo, scopes = alcances_google, cache = TRUE
+  )
+  googlesheets4::gs4_auth(token = googledrive::drive_token())
+  googledrive::drive_find(n_max = 1)
+  usuario <- googledrive::drive_user()
+  if (is.null(usuario$emailAddress) || !nzchar(usuario$emailAddress)) {
+    stop("Google no devolvió el correo de la cuenta autorizada")
+  }
+  usuario$emailAddress
 }
 
 ui <- shiny::fluidPage(
@@ -44,6 +75,10 @@ ui <- shiny::fluidPage(
                  font-family:Consolas,monospace; font-size:12px; }
       .console pre { background:transparent; color:inherit; border:0; margin:0; padding:0;
                      white-space:pre-wrap; font:inherit; }
+      .google-status { background:#f1f8f8; border-radius:10px; padding:10px 12px;
+                       margin:8px 0 14px; font-size:13px; }
+      .btn-google { border-color:#58aeb3; color:#176067; border-radius:10px; margin-bottom:8px; }
+      .btn-google:hover,.btn-google:focus { background:#e3f3f3; color:#0c565c; }
       .pill { display:inline-block; background:#d8efef; color:#176067; border-radius:99px;
               padding:5px 11px; font-size:12px; font-weight:700; margin-bottom:12px; }
       @media (max-width:767px) { .container-fluid { padding:16px 12px 30px; } .hero { padding:24px; }
@@ -70,18 +105,20 @@ ui <- shiny::fluidPage(
           shiny::textInput("plantilla", "Plantilla Word", value = plantilla_defecto),
           shiny::checkboxInput(
             "usar_google", "Guardar también en Google Drive / Sheets",
-            value = valor_logico("GOOGLE_ENABLED", TRUE)
+            value = valor_logico("GOOGLE_ENABLED", FALSE)
           ),
           shiny::conditionalPanel(
             "input.usar_google",
             shiny::textInput(
-              "credencial", "Ruta de la llave JSON",
-              value = Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS", json_sugerido)
+              "google_email", "Cuenta personal de Google (opcional)",
+              value = Sys.getenv("GOOGLE_USER_EMAIL", ""),
+              placeholder = "nombre@gmail.com"
             ),
-            shiny::fileInput(
-              "credencial_archivo", "O seleccionar otra llave JSON", accept = ".json",
-              buttonLabel = "Seleccionar", placeholder = "Se usará la ruta escrita arriba"
+            shiny::actionButton(
+              "conectar_google", "Conectar o renovar permisos",
+              class = "btn-google", icon = shiny::icon("link")
             ),
+            shiny::uiOutput("estado_google"),
             shiny::textInput(
               "carpeta_google", "Nombre exacto de la carpeta de Drive",
               value = Sys.getenv(
@@ -101,7 +138,9 @@ ui <- shiny::fluidPage(
               "crear_sheets", "Crear un Google Sheet con Control y Tabla_1 a Tabla_6",
               value = valor_logico("GOOGLE_CREATE_SHEETS", TRUE)
             ),
-            shiny::helpText("La llave nunca se copia al proyecto. La cuenta de servicio debe tener permiso de escritura en una unidad compartida.")
+            shiny::helpText(
+              "La conexión abre Google y solicita permisos de Drive y Sheets. Úsala también para renovar un permiso insuficiente; no se necesita una llave JSON."
+            )
           )
         ),
         shiny::actionButton("generar", "Generar reporte", class = "btn-run", icon = shiny::icon("play"))
@@ -127,6 +166,10 @@ server <- function(input, output, session) {
     tipo = "listo", mensaje = "Listo para generar. Revisa los campos y presiona el botón.",
     consola = "Aún no se ha ejecutado el programa.", word = NULL
   ))
+  cuenta_google <- shiny::reactiveVal("")
+  conexion_google <- shiny::reactiveVal(list(
+    tipo = "listo", texto = "Google no conectado. Esta salida es opcional."
+  ))
 
   output$estado <- shiny::renderUI({
     x <- resultado()
@@ -142,30 +185,53 @@ server <- function(input, output, session) {
     shiny::div(class = "status-box", style = paste0("border-left-color:", color, ";"), x$mensaje)
   })
   output$consola <- shiny::renderText(resultado()$consola)
+  output$estado_google <- shiny::renderUI({
+    x <- conexion_google()
+    color <- if (identical(x$tipo, "ok")) {
+      "#168160"
+    } else if (identical(x$tipo, "error")) {
+      "#b54a4a"
+    } else {
+      "#5e7779"
+    }
+    shiny::div(class = "google-status", style = paste0("color:", color, ";"), x$texto)
+  })
+
+  shiny::observeEvent(input$conectar_google, {
+    conexion_google(list(tipo = "listo", texto = "Abriendo la autorización de Google…"))
+    shiny::withProgress(message = "Conectando con Google", value = 0.25, {
+      respuesta <- tryCatch(
+        list(ok = TRUE, correo = autenticar_google_personal(input$google_email, forzar = TRUE)),
+        error = function(e) list(ok = FALSE, mensaje = conditionMessage(e))
+      )
+      shiny::incProgress(0.75)
+      if (isTRUE(respuesta$ok)) {
+        cuenta_google(respuesta$correo)
+        shiny::updateTextInput(session, "google_email", value = respuesta$correo)
+        conexion_google(list(
+          tipo = "ok", texto = paste("Cuenta conectada:", respuesta$correo)
+        ))
+      } else {
+        cuenta_google("")
+        conexion_google(list(
+          tipo = "error",
+          texto = paste(
+            "No fue posible conectar. Vuelve a pulsar Conectar o renovar permisos:",
+            respuesta$mensaje
+          )
+        ))
+      }
+    })
+  })
 
   shiny::observeEvent(input$generar, {
     excel <- if (!is.null(input$excel)) input$excel$datapath else excel_prueba
     plantilla <- trimws(input$plantilla)
     salidas <- trimws(input$carpeta_salida)
-    credencial <- if (!is.null(input$credencial_archivo)) {
-      input$credencial_archivo$datapath
-    } else {
-      trimws(input$credencial)
-    }
     errores <- character()
     if (!file.exists(excel)) errores <- c(errores, "No se encontró el Excel.")
     if (!file.exists(plantilla)) errores <- c(errores, "No se encontró la plantilla Word.")
     if (!nzchar(salidas)) errores <- c(errores, "Indica una carpeta de salida.")
-    if (isTRUE(input$usar_google) && !file.exists(credencial)) {
-      errores <- c(errores, "No se encontró la llave JSON. Corrige la ruta o desactiva Google.")
-    }
-    if (isTRUE(input$usar_google) &&
-        !nzchar(trimws(input$carpeta_google_id)) && !nzchar(trimws(input$carpeta_google))) {
-      errores <- c(errores, "Indica el nombre o el ID de la carpeta de Drive.")
-    }
-    if (isTRUE(input$usar_google) && !isTRUE(input$subir_archivos) && !isTRUE(input$crear_sheets)) {
-      errores <- c(errores, "Activa al menos una salida de Google o desactiva Google.")
-    }
     if (length(errores)) {
       resultado(list(
         tipo = "error", mensaje = paste(errores, collapse = "\n"),
@@ -178,25 +244,84 @@ server <- function(input, output, session) {
     resultado(list(tipo = "proceso", mensaje = "Generando el reporte…", consola = "Proceso iniciado.", word = NULL))
 
     shiny::withProgress(message = "Generando reporte", value = 0.15, {
+      correo_google <- trimws(input$google_email)
+      if (isTRUE(input$usar_google)) {
+        correo_guardado <- cuenta_google()
+        if (nzchar(correo_guardado) &&
+            (!nzchar(correo_google) || identical(correo_google, correo_guardado))) {
+          correo_google <- correo_guardado
+        } else {
+          forzar_inicial <- !nzchar(correo_google)
+          autenticacion <- tryCatch(
+            list(
+              ok = TRUE,
+              correo = autenticar_google_personal(
+                correo_google, forzar = forzar_inicial
+              )
+            ),
+            error = function(e) list(ok = FALSE, mensaje = conditionMessage(e))
+          )
+          if (!isTRUE(autenticacion$ok) && !forzar_inicial) {
+            autenticacion <- tryCatch(
+              list(
+                ok = TRUE,
+                correo = autenticar_google_personal(correo_google, forzar = TRUE)
+              ),
+              error = function(e) list(ok = FALSE, mensaje = conditionMessage(e))
+            )
+          }
+          if (isTRUE(autenticacion$ok)) {
+            correo_google <- autenticacion$correo
+            cuenta_google(correo_google)
+            shiny::updateTextInput(session, "google_email", value = correo_google)
+            conexion_google(list(
+              tipo = "ok", texto = paste("Cuenta conectada:", correo_google)
+            ))
+          } else {
+            conexion_google(list(
+              tipo = "error",
+              texto = paste(
+                "Google no se conectó; el Word continuará:",
+                autenticacion$mensaje
+              )
+            ))
+          }
+        }
+      }
+
       rscript <- file.path(R.home("bin"), if (.Platform$OS.type == "windows") "Rscript.exe" else "Rscript")
       argumentos <- c(
         shQuote(file.path(raiz, "main.R")), "--automatico",
-        shQuote(excel), shQuote(plantilla), shQuote(salidas)
+        shQuote(excel), shQuote(plantilla), shQuote(salidas),
+        shQuote(paste0("--google-enabled=", tolower(as.character(input$usar_google)))),
+        shQuote(paste0("--google-email=", correo_google)),
+        shQuote(paste0("--google-folder-name=", trimws(input$carpeta_google))),
+        shQuote(paste0("--google-folder-id=", trimws(input$carpeta_google_id))),
+        shQuote(paste0("--google-upload-files=", tolower(as.character(input$subir_archivos)))),
+        shQuote(paste0("--google-create-sheets=", tolower(as.character(input$crear_sheets))))
       )
-      variables <- c(
-        paste0("GOOGLE_ENABLED=", tolower(as.character(input$usar_google))),
-        paste0("GOOGLE_APPLICATION_CREDENTIALS=", credencial),
-        paste0("GOOGLE_DRIVE_FOLDER_NAME=", trimws(input$carpeta_google)),
-        paste0("GOOGLE_DRIVE_FOLDER_ID=", trimws(input$carpeta_google_id)),
-        paste0("GOOGLE_UPLOAD_FILES=", tolower(as.character(input$subir_archivos))),
-        paste0("GOOGLE_CREATE_SHEETS=", tolower(as.character(input$crear_sheets)))
-      )
-      salida <- tryCatch(
-        system2(rscript, args = argumentos, stdout = TRUE, stderr = TRUE, env = variables),
-        error = function(e) structure(conditionMessage(e), status = 1L)
+      archivo_consola <- tempfile("reporte_consola_", fileext = ".log")
+      ejecucion <- tryCatch(
+        list(
+          codigo = system2(
+            rscript, args = argumentos,
+            stdout = archivo_consola, stderr = archivo_consola
+          ),
+          error = NULL
+        ),
+        error = function(e) list(codigo = 1L, error = conditionMessage(e))
       )
       shiny::incProgress(0.75)
-      codigo <- attr(salida, "status")
+      salida <- if (file.exists(archivo_consola)) {
+        readLines(archivo_consola, encoding = "UTF-8", warn = FALSE)
+      } else {
+        character()
+      }
+      unlink(archivo_consola)
+      if (!is.null(ejecucion$error)) {
+        salida <- c(salida, paste("ERROR:", ejecucion$error))
+      }
+      codigo <- ejecucion$codigo
       if (is.null(codigo)) codigo <- 0L
       texto <- paste(salida, collapse = "\n")
 
