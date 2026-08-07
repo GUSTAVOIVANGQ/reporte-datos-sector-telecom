@@ -1,452 +1,348 @@
 #!/usr/bin/env Rscript
 
-# Motor interno. El punto de entrada público del proyecto es main.R.
-# Automatiza el reporte sin sobrescribir el Excel ni la plantilla Word.
-paquetes <- c("readxl", "xml2", "zip")
-faltan <- paquetes[!vapply(paquetes, requireNamespace, logical(1), quietly = TRUE)]
-if (length(faltan)) {
-  stop("Faltan paquetes: ", paste(faltan, collapse = ", "),
-       ". Ejecute primero: Rscript instalar_paquetes.R")
-}
+# Orquestador del reporte completo de seis secciones a partir de fuentes BIT.
 
-args_full <- commandArgs(trailingOnly = FALSE)
-archivo_arg <- sub("^--file=", "", args_full[grepl("^--file=", args_full)])
-raiz <- if (length(archivo_arg)) dirname(normalizePath(archivo_arg[1])) else getwd()
-args <- commandArgs(trailingOnly = TRUE)
-args <- args[!args %in% c("--automatico", "--ui")]
-args <- args[!grepl("^--google-", args)]
-archivo_excel <- if (length(args) >= 1) args[1] else file.path(raiz, "entrada", "Entrada_Reporte_Telecom_PRUEBA.xlsx")
-archivo_plantilla <- if (length(args) >= 2) args[2] else file.path(raiz, "plantilla", "Plantilla_Reporte_Telecom_Automatizable.docx")
-carpeta_salidas <- if (length(args) >= 3) args[3] else file.path(raiz, "salidas")
+raiz_motor <- getOption("reporte.raiz", getwd())
+source(file.path(raiz_motor, "fuentes_bit.R"), local = globalenv(), encoding = "UTF-8")
+source(file.path(raiz_motor, "motor_word_plantilla.R"), local = globalenv(), encoding = "UTF-8")
 
-if (!file.exists(archivo_excel)) stop("No existe el Excel: ", archivo_excel)
-if (!file.exists(archivo_plantilla)) stop("No existe la plantilla: ", archivo_plantilla)
-
-leer_parametros <- function(ruta) {
-  x <- readxl::read_excel(ruta, sheet = "Parametros", skip = 2, .name_repair = "minimal")
-  setNames(as.character(x[[2]]), as.character(x[[1]]))
-}
-
-leer_tablas <- function(ruta) {
-  lapply(1:6, function(i) {
-    as.data.frame(readxl::read_excel(
-      ruta, sheet = paste0("Tabla_", i), skip = 3, .name_repair = "minimal"
-    ), check.names = FALSE)
-  })
-}
-
-numero <- function(x) suppressWarnings(as.numeric(x))
-fmt_entero <- function(x) formatC(numero(x), format = "f", digits = 0, big.mark = ",")
-fmt_decimal <- function(x) formatC(numero(x), format = "f", digits = 2, big.mark = ",")
-
-validar_parametros <- function(param) {
-  requeridos <- c(
-    "periodo_codigo", "trimestre_numero", "anio", "periodo_texto",
-    "periodo_portada", "version"
-  )
-  faltantes <- setdiff(requeridos, names(param))
-  if (length(faltantes)) stop("Faltan parámetros: ", paste(faltantes, collapse = ", "))
-  if (!grepl("^[0-9]{4}Q[1-4]$", param[["periodo_codigo"]])) {
-    stop("periodo_codigo debe tener formato AAAAQN; ejemplo: 2026Q1")
-  }
-  trimestre <- numero(param[["trimestre_numero"]])
-  anio <- numero(param[["anio"]])
-  if (!trimestre %in% 1:4 || is.na(anio) || anio < 2000) stop("Trimestre o año inválido")
-  esperado <- paste0(as.integer(anio), "Q", as.integer(trimestre))
-  if (!identical(param[["periodo_codigo"]], esperado)) {
-    stop("periodo_codigo no coincide con trimestre_numero y anio: se esperaba ", esperado)
-  }
-  if (!grepl("^[A-Za-z0-9_-]+$", param[["version"]])) {
-    stop("version contiene caracteres no permitidos para un nombre de archivo")
-  }
-}
-
-validar_entrada <- function(tablas) {
-  filas <- c(6, 6, 20, 12, 11, 9)
-  columnas <- c(4, 4, 5, 5, 5, 5)
-  grupos_requeridos <- list(
-    c("América Móvil", "AT&T", "Telefónica", "Grupo Walmart", "Otros"),
-    c("América Móvil", "AT&T", "Telefónica", "Grupo Walmart", "Otros"),
-    c("América Móvil", "AT&T", "Grupo Televisa", "Megacable-MCM", "Grupo Salinas",
-      "Telefónica", "Grupo Walmart", "Axtel", "Altán", "Otros"),
-    c("América Móvil", "Grupo Televisa", "Megacable-MCM", "Grupo Salinas", "Otros"),
-    c("América Móvil", "Grupo Televisa", "Megacable-MCM", "Grupo Salinas", "Otros"),
-    c("Grupo Televisa", "Megacable-MCM", "Grupo Salinas", "Dish", "Otros")
-  )
-  for (i in 1:6) {
-    if (nrow(tablas[[i]]) != filas[i] || ncol(tablas[[i]]) != columnas[i]) {
-      stop(sprintf("Tabla_%d cambió de estructura: se esperaba %dx%d y se recibió %dx%d.",
-                   i, filas[i], columnas[i], nrow(tablas[[i]]), ncol(tablas[[i]])))
-    }
-    grupos <- trimws(as.character(tablas[[i]][[1]]))
-    faltantes <- setdiff(grupos_requeridos[[i]], grupos)
-    if (length(faltantes)) stop("Faltan grupos en Tabla_", i, ": ", paste(faltantes, collapse = ", "))
-    valores <- numero(tablas[[i]][[ncol(tablas[[i]])]])
-    if (any(is.na(valores)) || any(valores < 0)) stop("Hay valores vacíos o negativos en Tabla_", i)
-    total <- valores[nrow(tablas[[i]])]
-    detalle <- sum(valores[-nrow(tablas[[i]])])
-    if (abs(total - detalle) > 0.01) stop("El TOTAL no concilia en Tabla_", i)
-    if (i >= 3) {
-      for (grupo in setdiff(unique(grupos), c("Otros", "TOTAL"))) {
-        filas_grupo <- grupos == grupo
-        total_gie <- unique(numero(tablas[[i]][filas_grupo, 2]))
-        total_gie <- total_gie[!is.na(total_gie)]
-        if (length(total_gie) != 1 || abs(total_gie - sum(valores[filas_grupo])) > 0.01) {
-          stop("El total por GIE no concilia para ", grupo, " en Tabla_", i)
-        }
-      }
-    }
-  }
-}
-
-datos_seccion <- function(tabla, seccion) {
-  grupo <- trimws(as.character(tabla[[1]]))
-  if (seccion <= 2) {
-    valor <- numero(tabla[[ncol(tabla)]])
-    salida <- data.frame(grupo, valor, stringsAsFactors = FALSE)
-    salida <- salida[!is.na(salida$grupo) & salida$grupo != "TOTAL" & !is.na(salida$valor), ]
-  } else {
-    valor_gie <- numero(tabla[[2]])
-    salida <- data.frame(grupo, valor = valor_gie, stringsAsFactors = FALSE)
-    salida <- salida[!is.na(salida$grupo) & salida$grupo != "TOTAL" & !is.na(salida$valor), ]
-    salida <- salida[!duplicated(salida$grupo), ]
-    fila_otros <- which(grupo == "Otros")
-    if (length(fila_otros)) {
-      salida <- rbind(salida, data.frame(
-        grupo = "Otros", valor = numero(tabla[fila_otros[1], ncol(tabla)])
-      ))
-    }
-  }
-  salida[order(-salida$valor), , drop = FALSE]
-}
-
-mapear <- function(grupo, mapa) {
-  x <- unname(mapa[grupo])
-  x[is.na(x)] <- grupo[is.na(x)]
-  x
-}
-
-mapas_grafica <- list(
-  c("América Móvil" = "América Móvil (Telcel)", "AT&T" = "AT&T",
-    "Telefónica" = "Telefónica (Movistar)", "Grupo Walmart" = "Grupo Walmart (Bait)"),
-  c("América Móvil" = "América Móvil (Telcel)", "AT&T" = "AT&T",
-    "Telefónica" = "Telefónica (Movistar)", "Grupo Walmart" = "Grupo Walmart (Bait)"),
-  character(),
-  c("América Móvil" = "América Móvil (Telmex-Telnor)",
-    "Grupo Televisa" = "Grupo Televisa (Izzi, Sky)",
-    "Grupo Salinas" = "Grupo Salinas (Totalplay)"),
-  c("América Móvil" = "América Móvil (Telmex-Telnor)",
-    "Grupo Televisa" = "Grupo Televisa (Izzi, Sky)",
-    "Grupo Salinas" = "Grupo Salinas (Totalplay)"),
-  c("Grupo Televisa" = "Grupo Televisa (Izzi, Sky)",
-    "Grupo Salinas" = "Grupo Salinas (Totalplay)")
+unidades_seccion <- c(
+  "líneas", "accesos", "millones de pesos",
+  "líneas", "accesos", "accesos"
 )
-
-mapas_texto <- list(
-  mapas_grafica[[1]], mapas_grafica[[2]], character(), character(), character(), character()
-)
-
-colores <- c(
-  "América Móvil" = "#1E6284", "AT&T" = "#667489", "Telefónica" = "#368491",
-  "Grupo Walmart" = "#1B4044", "Grupo Televisa" = "#ED8945",
-  "Grupo Salinas" = "#99B554", "Megacable-MCM" = "#5844A0",
-  "Altán" = "#8E244D", "Axtel" = "#994010", "Dish" = "#0F9ED5",
-  "Otros" = "#728781"
-)
-
-rectangulo <- function(grupo, xmin, xmax, ymin, ymax) {
-  data.frame(grupo, xmin, xmax, ymin, ymax, stringsAsFactors = FALSE)
-}
-
-diseno_rectangulos <- function(datos, seccion) {
-  v <- setNames(datos$valor, datos$grupo)
-  p <- function(nombre) unname(v[[nombre]])
-  total <- sum(v)
-
-  if (seccion == 1) {
-    x <- p("América Móvil") / total
-    h1 <- p("AT&T") / (total - p("América Móvil"))
-    h3 <- p("Otros") / (total - p("América Móvil"))
-    xm <- x + (1 - x) * p("Telefónica") / sum(v[c("Telefónica", "Grupo Walmart")])
-    return(rbind(
-      rectangulo("América Móvil", 0, x, 0, 1), rectangulo("AT&T", x, 1, 0, h1),
-      rectangulo("Telefónica", x, xm, h1, 1 - h3),
-      rectangulo("Grupo Walmart", xm, 1, h1, 1 - h3),
-      rectangulo("Otros", x, 1, 1 - h3, 1)
-    ))
-  }
-  if (seccion == 2) {
-    x <- p("América Móvil") / total
-    h <- sum(v[c("AT&T", "Telefónica")]) / (total - p("América Móvil"))
-    xt <- x + (1 - x) * p("AT&T") / sum(v[c("AT&T", "Telefónica")])
-    xb <- x + (1 - x) * p("Grupo Walmart") / sum(v[c("Grupo Walmart", "Otros")])
-    return(rbind(
-      rectangulo("América Móvil", 0, x, 0, 1), rectangulo("AT&T", x, xt, 0, h),
-      rectangulo("Telefónica", xt, 1, 0, h), rectangulo("Grupo Walmart", x, xb, h, 1),
-      rectangulo("Otros", xb, 1, h, 1)
-    ))
-  }
-  if (seccion == 3) {
-    x <- p("América Móvil") / total
-    h1 <- sum(v[c("AT&T", "Grupo Televisa")]) / (total - p("América Móvil"))
-    xt <- x + (1 - x) * p("AT&T") / sum(v[c("AT&T", "Grupo Televisa")])
-    resto <- v[c("Grupo Salinas", "Megacable-MCM", "Telefónica", "Otros",
-                 "Grupo Walmart", "Altán", "Axtel")]
-    xm <- x + (1 - x) * sum(resto[c("Grupo Salinas", "Megacable-MCM")]) / sum(resto)
-    hs <- h1 + (1 - h1) * p("Grupo Salinas") / sum(v[c("Grupo Salinas", "Megacable-MCM")])
-    hr <- h1 + (1 - h1) * sum(v[c("Telefónica", "Otros")]) / sum(resto[c(
-      "Telefónica", "Otros", "Grupo Walmart", "Altán", "Axtel")])
-    xo <- xm + (1 - xm) * p("Telefónica") / sum(v[c("Telefónica", "Otros")])
-    xa <- xm + (1 - xm) * sum(v[c("Grupo Walmart", "Altán")]) /
-      sum(v[c("Grupo Walmart", "Altán", "Axtel")])
-    hw <- hr + (1 - hr) * p("Grupo Walmart") / sum(v[c("Grupo Walmart", "Altán")])
-    return(rbind(
-      rectangulo("América Móvil", 0, x, 0, 1), rectangulo("AT&T", x, xt, 0, h1),
-      rectangulo("Grupo Televisa", xt, 1, 0, h1),
-      rectangulo("Grupo Salinas", x, xm, h1, hs), rectangulo("Megacable-MCM", x, xm, hs, 1),
-      rectangulo("Telefónica", xm, xo, h1, hr), rectangulo("Otros", xo, 1, h1, hr),
-      rectangulo("Grupo Walmart", xm, xa, hr, hw), rectangulo("Altán", xm, xa, hw, 1),
-      rectangulo("Axtel", xa, 1, hr, 1)
-    ))
-  }
-  if (seccion %in% c(4, 5)) {
-    x <- p("América Móvil") / total
-    h <- sum(v[c("Grupo Televisa", "Megacable-MCM")]) / (total - p("América Móvil"))
-    xt <- x + (1 - x) * p("Grupo Televisa") / sum(v[c("Grupo Televisa", "Megacable-MCM")])
-    xb <- x + (1 - x) * p("Grupo Salinas") / sum(v[c("Grupo Salinas", "Otros")])
-    return(rbind(
-      rectangulo("América Móvil", 0, x, 0, 1), rectangulo("Grupo Televisa", x, xt, 0, h),
-      rectangulo("Megacable-MCM", xt, 1, 0, h), rectangulo("Grupo Salinas", x, xb, h, 1),
-      rectangulo("Otros", xb, 1, h, 1)
-    ))
-  }
-  x <- p("Grupo Televisa") / total
-  h <- p("Megacable-MCM") / (total - p("Grupo Televisa"))
-  xb <- x + (1 - x) * p("Grupo Salinas") / sum(v[c("Grupo Salinas", "Dish", "Otros")])
-  hd <- h + (1 - h) * p("Dish") / sum(v[c("Dish", "Otros")])
-  rbind(
-    rectangulo("Grupo Televisa", 0, x, 0, 1), rectangulo("Megacable-MCM", x, 1, 0, h),
-    rectangulo("Grupo Salinas", x, xb, h, 1), rectangulo("Dish", xb, 1, h, hd),
-    rectangulo("Otros", xb, 1, hd, 1)
-  )
-}
-
-ajustar_rotulo <- function(texto, ancho, alto, max_pt = 18, min_pt = 5) {
-  palabras <- strsplit(texto, " +")[[1]]
-  for (pt in seq(max_pt, min_pt, by = -0.5)) {
-    gp <- grid::gpar(fontsize = pt, fontface = "bold", fontfamily = "sans", col = "white")
-    lineas <- character()
-    actual <- ""
-    for (palabra in palabras) {
-      prueba <- trimws(paste(actual, palabra))
-      medida <- grid::convertWidth(grid::grobWidth(grid::textGrob(prueba, gp = gp)), "npc", valueOnly = TRUE)
-      if (nzchar(actual) && medida > ancho) {
-        lineas <- c(lineas, actual); actual <- palabra
-      } else actual <- prueba
-    }
-    lineas <- c(lineas, actual)
-    hlinea <- grid::convertHeight(grid::grobHeight(grid::textGrob("Ágj", gp = gp)), "npc", valueOnly = TRUE) * 1.18
-    if (length(lineas) * hlinea <= alto) return(list(texto = paste(lineas, collapse = "\n"), gp = gp))
-  }
-  NULL
-}
 
 guardar_grafica <- function(datos, seccion, ruta) {
-  d <- diseno_rectangulos(datos, seccion)
-  valores <- setNames(datos$valor, datos$grupo)
-  etiquetas <- setNames(mapear(datos$grupo, mapas_grafica[[seccion]]), datos$grupo)
-  if (seccion <= 2) colores["América Móvil"] <- "#683E5D"
-  alturas <- c(1483, 1483, 1481, 1481, 1481, 1483)
-  grDevices::png(ruta, width = 2048, height = alturas[seccion], res = 200, bg = "white")
-  grid::grid.newpage()
-  margen_total <- if (seccion %in% c(3, 4, 5)) 5.08 else 4
-  grid::pushViewport(grid::viewport(
-    width = grid::unit(1, "npc") - grid::unit(margen_total, "mm"),
-    height = grid::unit(1, "npc") - grid::unit(margen_total, "mm")
-  ))
-  for (i in seq_len(nrow(d))) {
-    r <- d[i, ]
-    grid::grid.rect(
-      x = (r$xmin + r$xmax) / 2, y = 1 - (r$ymin + r$ymax) / 2,
-      width = r$xmax - r$xmin, height = r$ymax - r$ymin,
-      gp = grid::gpar(fill = unname(colores[r$grupo]), col = "white", lwd = 2)
-    )
-    valor <- if (seccion == 3) valores[[r$grupo]] else valores[[r$grupo]] / 1e6
-    rotulo <- paste0(etiquetas[[r$grupo]], ", ", fmt_decimal(valor))
-    padding <- 0.008
-    ajuste <- ajustar_rotulo(rotulo, r$xmax - r$xmin - 2 * padding, r$ymax - r$ymin - 2 * padding)
-    if (!is.null(ajuste)) grid::grid.text(
-      ajuste$texto, x = r$xmin + padding, y = 1 - r$ymax + padding,
-      just = c("left", "bottom"), gp = ajuste$gp
-    )
-  }
-  grid::popViewport()
-  grDevices::dev.off()
-}
+  dir.create(dirname(ruta), recursive = TRUE, showWarnings = FALSE)
+  datos <- datos[is.finite(datos$valor) & datos$valor > 0, , drop = FALSE]
+  if (!nrow(datos)) stop("No hay valores positivos para la gráfica de la sección ", seccion)
+  datos <- datos[order(datos$valor), , drop = FALSE]
+  etiquetas <- mapear(datos$grupo, mapas_grafica[[seccion]])
+  valores <- if (seccion == 3L) datos$valor else datos$valor / 1e6
+  colores_barras <- unname(colores[datos$grupo])
+  colores_barras[is.na(colores_barras)] <- "#3B8C91"
+  unidad <- if (seccion == 3L) "Millones de pesos" else "Millones"
 
-valores_texto <- function(param, tablas, datos) {
-  v <- list(
-    PERIODO_PORTADA = param[["periodo_portada"]],
-    PERIODO_PIE = gsub(" DE ", " ", param[["periodo_portada"]], fixed = TRUE),
-    PERIODO_TEXTO = param[["periodo_texto"]],
-    TOTAL_LINEAS_MOVIL = fmt_entero(tablas[[1]][nrow(tablas[[1]]), 4]),
-    TOTAL_INTERNET_MOVIL = fmt_entero(tablas[[2]][nrow(tablas[[2]]), 4]),
-    TOTAL_INGRESOS = fmt_decimal(tablas[[3]][nrow(tablas[[3]]), 5]),
-    TOTAL_LINEAS_FIJAS = fmt_entero(tablas[[4]][nrow(tablas[[4]]), 5]),
-    TOTAL_INTERNET_FIJO = fmt_entero(tablas[[5]][nrow(tablas[[5]]), 5]),
-    TOTAL_TV_RESTRINGIDA = fmt_entero(tablas[[6]][nrow(tablas[[6]]), 5])
+  grDevices::png(ruta, width = 2048, height = 1481, res = 200, bg = "white")
+  on.exit(grDevices::dev.off(), add = TRUE)
+  graphics::par(
+    mar = c(5.0, 12.5, 1.0, 3.2), family = "sans",
+    fg = "#173F43", col.axis = "#365A5D", las = 1
   )
-  lideres <- c(4, 4, 5, 4, 4, 3)
-  for (s in 1:6) {
-    d <- datos[[s]][datos[[s]]$grupo != "Otros", , drop = FALSE]
-    d <- d[order(-d$valor), , drop = FALSE]
-    total <- numero(tablas[[s]][nrow(tablas[[s]]), ncol(tablas[[s]])])
-    nombres <- mapear(d$grupo, mapas_texto[[s]])
-    for (j in seq_len(lideres[s])) {
-      v[[sprintf("S%d_L%d_NOMBRE", s, j)]] <- nombres[j]
-      v[[sprintf("S%d_L%d_PCT", s, j)]] <- sprintf("%.2f%%", 100 * d$valor[j] / total)
-    }
-    v[[sprintf("S%d_OTROS_EMPRESAS", s)]] <- param[[paste0("empresas_otros_tabla_", s)]]
-  }
-  v
-}
-
-formatear_celda <- function(valor, tabla, columna) {
-  if (length(valor) == 0 || is.na(valor)) return("")
-  if (is.numeric(valor)) {
-    if (tabla == 3 && columna %in% c(2, 5)) return(fmt_decimal(valor))
-    return(fmt_entero(valor))
-  }
-  as.character(valor)
-}
-
-actualizar_word <- function(plantilla, salida, tablas, textos, graficas) {
-  ns <- c(
-    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
-    a = "http://schemas.openxmlformats.org/drawingml/2006/main",
-    r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+  limite <- max(valores) * 1.25
+  posiciones <- graphics::barplot(
+    valores,
+    names.arg = etiquetas,
+    horiz = TRUE,
+    col = colores_barras,
+    border = NA,
+    xlim = c(0, limite),
+    axes = FALSE,
+    cex.names = 0.92,
+    space = 0.42
   )
-  tmp <- tempfile("reporte_word_")
-  dir.create(tmp)
-  on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
-  utils::unzip(plantilla, exdir = tmp)
-  doc_xml <- file.path(tmp, "word", "document.xml")
-  rel_xml <- file.path(tmp, "word", "_rels", "document.xml.rels")
-  doc <- xml2::read_xml(doc_xml)
+  marcas <- pretty(c(0, max(valores)), n = 6)
+  graphics::abline(v = marcas, col = "#DCE9E9", lwd = 1)
+  graphics::axis(1, at = marcas, labels = fmt_decimal(marcas), cex.axis = 0.82)
+  graphics::text(
+    valores + limite * 0.012,
+    posiciones,
+    labels = fmt_decimal(valores),
+    pos = 4,
+    cex = 0.82,
+    col = "#173F43",
+    xpd = TRUE
+  )
+  graphics::mtext(unidad, side = 1, line = 3.2, cex = 0.90, col = "#365A5D")
+  invisible(ruta)
+}
 
-  rellenar_controles <- function(xml, incluir_tablas = FALSE) {
-    sdts <- xml2::xml_find_all(xml, ".//w:sdt", ns)
-    for (sdt in sdts) {
-      tag <- xml2::xml_attr(xml2::xml_find_first(sdt, "./w:sdtPr/w:tag", ns), "w:val", ns)
-      valor <- NULL
-      if (!is.na(tag) && tag %in% names(textos)) valor <- textos[[tag]]
-      if (incluir_tablas && !is.na(tag) && grepl("^T[0-9]{2}_R[0-9]{2}_C[0-9]{2}$", tag)) {
-        partes <- as.integer(sub("^T([0-9]{2})_R([0-9]{2})_C([0-9]{2})$", "\\1 \\2 \\3", tag) |>
-                              strsplit(" ") |> unlist())
-        valor <- formatear_celda(tablas[[partes[1]]][partes[2], partes[3]], partes[1], partes[3])
-      }
-      if (!is.null(valor)) {
-        nodos <- xml2::xml_find_all(sdt, "./w:sdtContent//w:t", ns)
-        if (!length(nodos) && identical(as.character(valor), "")) next
-        if (!length(nodos)) stop("El control no contiene texto: ", tag)
-        xml2::xml_text(nodos[[1]]) <- enc2utf8(as.character(valor))
-        if (length(nodos) > 1) for (j in 2:length(nodos)) xml2::xml_text(nodos[[j]]) <- ""
-      }
-    }
-  }
-  rellenar_controles(doc, incluir_tablas = TRUE)
-
-  rels <- xml2::read_xml(rel_xml)
-  xml2::xml_ns_strip(rels)
+crear_parametros_periodo <- function(anio, trimestre, empresas_otros, version = "vBIT") {
+  frase <- paste0(trimestre_texto(trimestre), " trimestre de ", as.integer(anio))
+  parametros <- list(
+    reporte = "Reporte de Datos del Sector de Telecomunicaciones",
+    periodo_codigo = periodo_codigo(anio, trimestre),
+    trimestre_numero = as.integer(trimestre),
+    anio = as.integer(anio),
+    periodo_texto = frase,
+    periodo_portada = toupper(frase),
+    version = version,
+    estructura_tablas = "Fija; igual al DOCX de referencia",
+    modo_control = "Validación automática de seis fuentes BIT",
+    archivo_referencia = "Fuentes CSV publicadas en el BIT"
+  )
   for (i in 1:6) {
-    tag <- paste0("GRAFICA_", i)
-    sdt <- xml2::xml_find_first(doc, paste0(".//w:sdt[w:sdtPr/w:tag[@w:val='", tag, "']]"), ns)
-    if (inherits(sdt, "xml_missing")) stop("Falta el campo ", tag, " en la plantilla")
-    blip <- xml2::xml_find_first(sdt, ".//a:blip", ns)
-    rid <- xml2::xml_attr(blip, "r:embed", ns)
-    rel <- xml2::xml_find_first(rels, paste0(".//Relationship[@Id='", rid, "']"))
-    destino <- xml2::xml_attr(rel, "Target")
-    if (!file.copy(graficas[i], file.path(tmp, "word", destino), overwrite = TRUE)) {
-      stop("No se pudo sustituir ", tag)
-    }
+    parametros[[paste0("empresas_otros_tabla_", i)]] <- as.integer(empresas_otros[[i]])
   }
+  parametros
+}
 
-  xml2::write_xml(doc, doc_xml)
-  pies <- list.files(file.path(tmp, "word"), pattern = "^footer.*\\.xml$", full.names = TRUE)
-  for (pie_xml in pies) {
-    pie <- xml2::read_xml(pie_xml)
-    rellenar_controles(pie)
-    xml2::write_xml(pie, pie_xml)
-    invisible(xml2::read_xml(pie_xml))
+enriquecer_control <- function(control, fuentes, catalogo) {
+  control$Archivo <- NA_character_
+  control$URL <- NA_character_
+  control$Ruta_local <- NA_character_
+  control$MD5 <- NA_character_
+  control$Unidad_reporte <- unidades_seccion[control$Seccion]
+  for (id in names(ESPECIFICACIONES_FUENTES)) {
+    e <- ESPECIFICACIONES_FUENTES[[id]]
+    filas <- control$Seccion == e$orden
+    control$Archivo[filas] <- e$archivo
+    control$URL[filas] <- catalogo[[id]]
+    control$Ruta_local[filas] <- normalizePath(
+      fuentes[[id]]$ruta, winslash = "/", mustWork = TRUE
+    )
+    control$MD5[filas] <- unname(tools::md5sum(fuentes[[id]]$ruta))
   }
-  invisible(xml2::read_xml(doc_xml))
-  archivos <- list.files(tmp, recursive = TRUE, all.files = TRUE,
-                         include.dirs = FALSE, no.. = TRUE)
-  zip::zip(
-    salida, archivos, recurse = FALSE, include_directories = FALSE,
-    root = tmp, mode = "mirror"
-  )
-  contenido <- zip::zip_list(salida)$filename
-  requeridos <- c("[Content_Types].xml", "_rels/.rels", "word/document.xml")
-  faltantes <- setdiff(requeridos, contenido)
-  if (length(faltantes)) {
-    stop(
-      "La copia Word no pasó la validación estructural. Faltan: ",
-      paste(faltantes, collapse = ", "),
-      ". Primeras rutas encontradas: ",
-      paste(utils::head(contenido, 8), collapse = ", ")
+  control
+}
+
+generar_documento_periodo <- function(raiz, fuentes, catalogo, anio, trimestre,
+                                      carpeta_reportes, carpeta_monitoreo,
+                                      plantilla) {
+  codigo <- periodo_codigo(anio, trimestre)
+  preparado <- preparar_tablas_periodo(fuentes, anio, trimestre)
+  tablas <- preparado$tablas
+  parametros <- crear_parametros_periodo(anio, trimestre, preparado$empresas_otros)
+  validar_parametros(parametros)
+  validar_entrada(tablas)
+  datos <- lapply(1:6, function(i) datos_seccion(tablas[[i]], i))
+
+  monitoreo_periodo <- file.path(carpeta_monitoreo, codigo)
+  dir.create(monitoreo_periodo, recursive = TRUE, showWarnings = FALSE)
+  for (i in 1:6) {
+    utils::write.csv(
+      tablas[[i]],
+      file.path(monitoreo_periodo, paste0("tabla_", i, ".csv")),
+      row.names = FALSE,
+      na = "",
+      fileEncoding = "UTF-8"
     )
   }
-  extras_raiz <- grepl("^(document|styles|settings|numbering|fontTable|footer|header|image)[^/]*", contenido)
-  if (any(extras_raiz) || anyDuplicated(contenido)) stop("El DOCX contiene archivos duplicados o fuera de lugar")
+  graficas <- file.path(monitoreo_periodo, paste0("grafica_", 1:6, ".png"))
+  for (i in 1:6) guardar_grafica(datos[[i]], i, graficas[[i]])
+
+  salida <- file.path(
+    carpeta_reportes,
+    paste0("Reporte_Telecomunicaciones_", codigo, "_vBIT.docx")
+  )
+  actualizar_word(
+    plantilla = plantilla,
+    salida = salida,
+    tablas = tablas,
+    textos = valores_texto(parametros, tablas, datos),
+    graficas = graficas
+  )
+  if (!file.exists(salida) || file.info(salida)$size <= 0) {
+    stop("No se creó correctamente el Word: ", salida)
+  }
+  list(
+    reporte = normalizePath(salida, winslash = "/", mustWork = TRUE),
+    control = enriquecer_control(preparado$control, fuentes, catalogo)
+  )
 }
 
-param <- leer_parametros(archivo_excel)
-tablas <- leer_tablas(archivo_excel)
-validar_parametros(param)
-validar_entrada(tablas)
-datos <- lapply(1:6, function(i) datos_seccion(tablas[[i]], i))
-
-id_ejecucion <- paste(param[["periodo_codigo"]], param[["version"]],
-                      format(Sys.time(), "%Y%m%d_%H%M%S"), sep = "_")
-carpeta_ejecucion <- file.path(carpeta_salidas, id_ejecucion)
-carpeta_monitoreo <- file.path(carpeta_ejecucion, "monitoreo")
-dir.create(carpeta_monitoreo, recursive = TRUE, showWarnings = FALSE)
-
-control <- data.frame(Etapa = character(), Estado = character(), Fecha = character(), Detalle = character())
-ruta_log <- file.path(carpeta_ejecucion, "ejecucion.log")
-registrar <- function(etapa, estado, detalle) {
-  fecha <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-  control <<- rbind(control, data.frame(
-    Etapa = etapa, Estado = estado, Fecha = fecha,
-    Detalle = detalle, stringsAsFactors = FALSE
-  ))
-  utils::write.csv(control, file.path(carpeta_ejecucion, "control_ejecucion.csv"),
-                   row.names = FALSE, fileEncoding = "UTF-8")
-  linea <- sprintf("[%s] [%s] %s - %s", fecha, estado, etapa, detalle)
-  conexion_log <- file(ruta_log, open = "a", encoding = "UTF-8")
-  on.exit(close(conexion_log), add = TRUE)
-  writeLines(enc2utf8(linea), con = conexion_log, useBytes = TRUE)
-  message(enc2utf8(linea))
+interpretar_trimestre <- function(trimestre) {
+  x <- normalizar_clave(trimestre)
+  if (x %in% c("TODOS", "TODAS", "DISPONIBLES")) return(1:4)
+  x <- sub("^Q", "", x)
+  valor <- suppressWarnings(as.integer(x))
+  if (is.na(valor) || !valor %in% 1:4) {
+    stop("El trimestre debe ser todos, 1, 2, 3 o 4")
+  }
+  valor
 }
 
-registrar("Inicio", "Completado", paste("Ejecución", id_ejecucion))
-registrar("Entrada", "Completado", paste(
-  "Excel leído; estructuras y totales conciliados:", normalizePath(archivo_excel)
-))
-for (i in 1:6) {
-  utils::write.csv(tablas[[i]], file.path(carpeta_monitoreo, paste0("tabla_", i, ".csv")),
-                   row.names = FALSE, na = "", fileEncoding = "UTF-8")
+trimestres_comunes <- function(fuentes, anio) {
+  disponibles <- lapply(names(ESPECIFICACIONES_FUENTES), function(id) {
+    trimestres_disponibles(
+      fuentes[[id]]$datos,
+      ESPECIFICACIONES_FUENTES[[id]],
+      anio
+    )
+  })
+  sort(Reduce(intersect, disponibles))
 }
-registrar("Tablas", "Completado", "Seis copias CSV creadas antes del Word")
 
-rutas_graficas <- file.path(carpeta_monitoreo, paste0("grafica_", 1:6, ".png"))
-for (i in 1:6) guardar_grafica(datos[[i]], i, rutas_graficas[i])
-registrar("Gráficas", "Completado", "Seis PNG creados desde las tablas")
+escribir_advertencias <- function(advertencias, ruta) {
+  if (!length(advertencias)) return(invisible(NULL))
+  writeLines(enc2utf8(unique(advertencias)), ruta, useBytes = TRUE)
+  invisible(ruta)
+}
 
-salida_word <- file.path(
-  carpeta_ejecucion,
-  paste0("Reporte_Telecomunicaciones_", param[["periodo_codigo"]], "_", param[["version"]], ".docx")
-)
-actualizar_word(archivo_plantilla, salida_word, tablas, valores_texto(param, tablas, datos), rutas_graficas)
-registrar("Word", "Completado", basename(salida_word))
+ejecutar_generacion <- function(
+    raiz,
+    anio = 2024L,
+    trimestre = "todos",
+    carpeta_salidas = file.path(raiz, "salidas"),
+    catalogo_excel = file.path(raiz, "config", "reporte-datos-sector-telecomunicaciones.xlsx"),
+    carpeta_cache = file.path(raiz, "entrada", "datos_bit"),
+    actualizar = FALSE,
+    permitir_red = TRUE) {
+  inicio <- Sys.time()
+  anio <- suppressWarnings(as.integer(anio))
+  if (is.na(anio) || anio < 2013L || anio > 2100L) stop("El año debe estar entre 2013 y 2100")
+  if (isTRUE(actualizar) && !isTRUE(permitir_red)) {
+    stop("No puede forzarse una actualización cuando la red está desactivada")
+  }
+  solicitado <- interpretar_trimestre(trimestre)
+  modo_todos <- length(solicitado) == 4L
+
+  marca <- format(inicio, "%Y%m%d_%H%M%S")
+  carpeta_base <- file.path(
+    carpeta_salidas,
+    paste0("ejecucion_", anio, "_", marca, "_", Sys.getpid())
+  )
+  carpeta_ejecucion <- carpeta_base
+  consecutivo <- 2L
+  while (dir.exists(carpeta_ejecucion)) {
+    carpeta_ejecucion <- paste0(carpeta_base, "_", consecutivo)
+    consecutivo <- consecutivo + 1L
+  }
+  carpeta_reportes <- file.path(carpeta_ejecucion, "reportes")
+  carpeta_monitoreo <- file.path(carpeta_ejecucion, "monitoreo")
+  dir.create(carpeta_reportes, recursive = TRUE, showWarnings = FALSE)
+  dir.create(carpeta_monitoreo, recursive = TRUE, showWarnings = FALSE)
+
+  catalogo <- leer_catalogo_fuentes(catalogo_excel)
+  cargadas <- cargar_todas_fuentes(
+    catalogo = catalogo,
+    carpeta_cache = carpeta_cache,
+    anio = anio,
+    trimestres_solicitados = solicitado,
+    actualizar = actualizar,
+    permitir_red = permitir_red
+  )
+  ruta_diagnostico <- file.path(carpeta_ejecucion, "diagnostico_fuentes.csv")
+  utils::write.csv(
+    cargadas$diagnostico,
+    ruta_diagnostico,
+    row.names = FALSE,
+    fileEncoding = "UTF-8"
+  )
+
+  comunes <- trimestres_comunes(cargadas$fuentes, anio)
+  advertencias <- cargadas$advertencias
+  if (modo_todos) {
+    seleccionados <- intersect(solicitado, comunes)
+    faltantes <- setdiff(solicitado, seleccionados)
+    if (length(faltantes)) {
+      advertencias <- c(
+        advertencias,
+        paste0(
+          "El año ", anio, " no tiene cobertura común para Q",
+          paste(faltantes, collapse = ", Q"),
+          ". Solo se generan los trimestres completos."
+        )
+      )
+    }
+  } else {
+    seleccionados <- solicitado
+    if (!all(seleccionados %in% comunes)) {
+      stop(
+        "No puede generarse ", periodo_codigo(anio, seleccionados),
+        " porque una o más secciones carecen del cierre requerido. Consulte ",
+        normalizePath(ruta_diagnostico, winslash = "/", mustWork = TRUE)
+      )
+    }
+  }
+  if (!length(seleccionados)) {
+    stop(
+      "No existe ningún trimestre común a las seis fuentes para ", anio,
+      ". Consulte ", normalizePath(ruta_diagnostico, winslash = "/", mustWork = TRUE)
+    )
+  }
+
+  plantilla <- file.path(raiz, "plantilla", "Plantilla_Reporte_Telecom_Automatizable.docx")
+  if (!file.exists(plantilla)) stop("No existe la plantilla Word: ", plantilla)
+  resultados <- vector("list", length(seleccionados))
+  controles <- vector("list", length(seleccionados))
+  for (i in seq_along(seleccionados)) {
+    q <- seleccionados[[i]]
+    message(sprintf("[%d/%d] Generando %s", i, length(seleccionados), periodo_codigo(anio, q)))
+    generado <- generar_documento_periodo(
+      raiz = raiz,
+      fuentes = cargadas$fuentes,
+      catalogo = catalogo,
+      anio = anio,
+      trimestre = q,
+      carpeta_reportes = carpeta_reportes,
+      carpeta_monitoreo = carpeta_monitoreo,
+      plantilla = plantilla
+    )
+    resultados[[i]] <- generado$reporte
+    controles[[i]] <- generado$control
+  }
+
+  control <- do.call(rbind, controles)
+  incidencias_valor <- control[control$Valores_imputados_cero > 0, , drop = FALSE]
+  if (nrow(incidencias_valor)) {
+    advertencias <- c(
+      advertencias,
+      vapply(seq_len(nrow(incidencias_valor)), function(i) {
+        fila <- incidencias_valor[i, ]
+        paste0(
+          fila$Periodo, " / ", fila$Fuente, ": ",
+          fila$Valores_imputados_cero,
+          " valor(es) total(es) vacío(s) se trataron como cero y quedaron registrados."
+        )
+      }, character(1))
+    )
+  }
+  ajustes_negativos <- control[control$Valores_negativos > 0, , drop = FALSE]
+  if (nrow(ajustes_negativos)) {
+    advertencias <- c(
+      advertencias,
+      vapply(seq_len(nrow(ajustes_negativos)), function(i) {
+        fila <- ajustes_negativos[i, ]
+        paste0(
+          fila$Periodo, " / ", fila$Fuente, ": ", fila$Valores_negativos,
+          " ajuste(s) negativo(s) se conservaron como están publicados."
+        )
+      }, character(1))
+    )
+  }
+  ruta_control <- file.path(carpeta_ejecucion, "control_ejecucion.csv")
+  utils::write.csv(control, ruta_control, row.names = FALSE, fileEncoding = "UTF-8")
+  resumen_totales <- control[c("Periodo", "Seccion", "Fuente", "Total_reporte", "Unidad_reporte")]
+  ruta_totales <- file.path(carpeta_ejecucion, "resumen_totales.csv")
+  utils::write.csv(resumen_totales, ruta_totales, row.names = FALSE, fileEncoding = "UTF-8")
+  ruta_advertencias <- file.path(carpeta_ejecucion, "advertencias.txt")
+  escribir_advertencias(advertencias, ruta_advertencias)
+
+  reportes <- unlist(resultados, use.names = FALSE)
+  if (length(reportes) == 1L) {
+    entregable <- reportes[[1]]
+  } else {
+    etiqueta_q <- paste0("Q", seleccionados, collapse = "_")
+    entregable <- file.path(
+      carpeta_ejecucion,
+      paste0("Reportes_Telecomunicaciones_", anio, "_", etiqueta_q, ".zip")
+    )
+    archivos_zip <- c(
+      file.path("reportes", basename(reportes)),
+      basename(ruta_diagnostico),
+      basename(ruta_control),
+      basename(ruta_totales)
+    )
+    if (length(advertencias)) archivos_zip <- c(archivos_zip, basename(ruta_advertencias))
+    zip::zipr(
+      entregable,
+      files = archivos_zip,
+      root = carpeta_ejecucion,
+      include_directories = FALSE
+    )
+  }
+
+  list(
+    ok = TRUE,
+    anio = anio,
+    trimestres_disponibles = comunes,
+    trimestres_generados = seleccionados,
+    reportes = normalizePath(reportes, winslash = "/", mustWork = TRUE),
+    entregable = normalizePath(entregable, winslash = "/", mustWork = TRUE),
+    carpeta = normalizePath(carpeta_ejecucion, winslash = "/", mustWork = TRUE),
+    diagnostico = normalizePath(ruta_diagnostico, winslash = "/", mustWork = TRUE),
+    control = normalizePath(ruta_control, winslash = "/", mustWork = TRUE),
+    advertencias = unique(advertencias),
+    duracion_segundos = round(as.numeric(difftime(Sys.time(), inicio, units = "secs")), 1)
+  )
+}

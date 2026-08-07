@@ -1,131 +1,111 @@
 #!/usr/bin/env Rscript
 
-# Único punto de entrada del proyecto.
+# Punto de entrada: interfaz Shiny o ejecución automática por año/trimestre.
 args_completos <- commandArgs(trailingOnly = FALSE)
 archivo_main <- sub("^--file=", "", args_completos[grepl("^--file=", args_completos)])
-raiz <- if (length(archivo_main)) dirname(normalizePath(archivo_main[1])) else getwd()
+raiz <- if (length(archivo_main)) dirname(normalizePath(archivo_main[[1]])) else getwd()
 args_usuario <- commandArgs(trailingOnly = TRUE)
+options(reporte.raiz = raiz)
 
-opciones_google <- c(
-  "--google-enabled" = "GOOGLE_ENABLED",
-  "--google-email" = "GOOGLE_USER_EMAIL",
-  "--google-folder-name" = "GOOGLE_DRIVE_FOLDER_NAME",
-  "--google-folder-id" = "GOOGLE_DRIVE_FOLDER_ID",
-  "--google-upload-files" = "GOOGLE_UPLOAD_FILES",
-  "--google-create-sheets" = "GOOGLE_CREATE_SHEETS"
-)
-for (opcion in names(opciones_google)) {
-  prefijo <- paste0(opcion, "=")
-  coincidencias <- args_usuario[startsWith(args_usuario, prefijo)]
-  if (length(coincidencias)) {
-    valor <- substring(coincidencias[[length(coincidencias)]], nchar(prefijo) + 1L)
-    do.call(Sys.setenv, setNames(list(valor), opciones_google[[opcion]]))
-  }
-}
-
-asegurar_paquetes <- function(paquetes, obligatorios = TRUE) {
+asegurar_paquetes <- function(paquetes) {
   faltan <- paquetes[!vapply(paquetes, requireNamespace, logical(1), quietly = TRUE)]
   if (length(faltan)) {
     message("Instalando paquetes faltantes: ", paste(faltan, collapse = ", "))
-    try(utils::install.packages(faltan, repos = "https://cloud.r-project.org"), silent = TRUE)
+    utils::install.packages(faltan, repos = "https://cloud.r-project.org")
   }
   pendientes <- paquetes[!vapply(paquetes, requireNamespace, logical(1), quietly = TRUE)]
-  if (length(pendientes) && obligatorios) {
-    stop("No fue posible instalar: ", paste(pendientes, collapse = ", "))
-  }
-  length(pendientes) == 0
+  if (length(pendientes)) stop("No fue posible instalar: ", paste(pendientes, collapse = ", "))
+  invisible(TRUE)
 }
 
-if ("--ayuda" %in% args_usuario || "-h" %in% args_usuario) {
+valor_opcion <- function(nombre, defecto = NULL) {
+  prefijo <- paste0(nombre, "=")
+  coincidencias <- args_usuario[startsWith(args_usuario, prefijo)]
+  if (!length(coincidencias)) return(defecto)
+  substring(coincidencias[[length(coincidencias)]], nchar(prefijo) + 1L)
+}
+
+mostrar_ayuda <- function() {
   cat(paste(
+    "Reporte de Datos del Sector de Telecomunicaciones",
+    "",
     "Uso:",
-    "  Rscript main.R                         Abre la interfaz local",
-    "  Rscript main.R --automatico            Genera con el Excel de prueba",
-    "  Rscript main.R --automatico EXCEL [PLANTILLA] [SALIDAS]",
-    "  La interfaz solicita la cuenta y usa automáticamente Drive y Sheets.",
+    "  Rscript main.R",
+    "      Abre la interfaz local.",
+    "",
+    "  Rscript main.R --automatico --anio=2024 --trimestre=todos",
+    "      Genera Q1, Q2, Q3 y Q4 que estén completos en las seis fuentes.",
+    "",
+    "  Rscript main.R --automatico --anio=2024 --trimestre=4",
+    "      Genera únicamente 2024Q4.",
+    "",
+    "Opciones:",
+    "  --anio=AAAA          Año del reporte (predeterminado: 2024).",
+    "  --trimestre=VALOR    todos, 1, 2, 3, 4 o Q1, Q2, Q3, Q4.",
+    "  --actualizar         Fuerza la descarga de las seis fuentes.",
+    "  --sin-red            No intenta descargar ni actualizar archivos.",
+    "  --catalogo=RUTA      Excel que contiene los seis enlaces.",
+    "  --cache=RUTA         Carpeta de CSV descargados.",
+    "  --salidas=RUTA       Carpeta de resultados.",
     sep = "\n"
   ), "\n")
+}
+
+if (any(args_usuario %in% c("--ayuda", "-h", "--help"))) {
+  mostrar_ayuda()
   quit(save = "no", status = 0L)
 }
 
 modo_ui <- !length(args_usuario) || "--ui" %in% args_usuario
+paquetes_motor <- c("readxl", "xml2", "zip")
+asegurar_paquetes(if (modo_ui) c(paquetes_motor, "shiny") else paquetes_motor)
+source(file.path(raiz, "generar_reporte.R"), local = globalenv(), encoding = "UTF-8")
+
 if (modo_ui) {
-  asegurar_paquetes("shiny")
-  options(reporte.raiz = raiz)
   source(file.path(raiz, "app.R"), local = globalenv(), encoding = "UTF-8")
 } else {
-  inicio <- Sys.time()
+  anio <- valor_opcion("--anio", "2024")
+  trimestre <- valor_opcion("--trimestre", "todos")
+  carpeta_salidas <- valor_opcion("--salidas", file.path(raiz, "salidas"))
+  catalogo <- valor_opcion(
+    "--catalogo", file.path(raiz, "config", "reporte-datos-sector-telecomunicaciones.xlsx")
+  )
+  cache <- valor_opcion("--cache", file.path(raiz, "entrada", "datos_bit"))
+  actualizar <- "--actualizar" %in% args_usuario
+  permitir_red <- !"--sin-red" %in% args_usuario
+
   estado <- 0L
-  entorno <- new.env(parent = globalenv())
-  advertencias <- character()
-
-  tryCatch({
-    asegurar_paquetes(c("readxl", "xml2", "zip"))
-    withCallingHandlers(
-      source(file.path(raiz, "generar_reporte.R"), local = entorno, encoding = "UTF-8"),
-      warning = function(w) {
-        advertencias <<- unique(c(advertencias, conditionMessage(w)))
-        invokeRestart("muffleWarning")
-      }
-    )
-
-    if (length(advertencias)) {
-      detalle <- paste(utils::head(advertencias, 10), collapse = " | ")
-      if (length(advertencias) > 10) detalle <- paste(detalle, "| Hay advertencias adicionales")
-      entorno$registrar("Advertencias", "Advertencia", detalle)
-    } else {
-      entorno$registrar("Advertencias", "Completado", "La generación local no produjo advertencias")
+  resultado <- tryCatch(
+    ejecutar_generacion(
+      raiz = raiz,
+      anio = anio,
+      trimestre = trimestre,
+      carpeta_salidas = carpeta_salidas,
+      catalogo_excel = catalogo,
+      carpeta_cache = cache,
+      actualizar = actualizar,
+      permitir_red = permitir_red
+    ),
+    error = function(e) {
+      estado <<- 1L
+      message("\nERROR: ", conditionMessage(e))
+      NULL
     }
+  )
 
-    duracion <- round(as.numeric(difftime(Sys.time(), inicio, units = "secs")), 1)
-    entorno$registrar("Resultado local", "Completado", paste("Ejecución", entorno$id_ejecucion))
-    entorno$registrar("Duración local", "Completado", paste(duracion, "segundos"))
-
-    source(file.path(raiz, "google_api.R"), local = entorno, encoding = "UTF-8")
-    resultado_google <- entorno$respaldar_google(
-      archivo_excel = entorno$archivo_excel,
-      salida_word = entorno$salida_word,
-      carpeta_ejecucion = entorno$carpeta_ejecucion,
-      carpeta_monitoreo = entorno$carpeta_monitoreo,
-      id_ejecucion = entorno$id_ejecucion,
-      tablas = entorno$tablas,
-      registrar = entorno$registrar,
-      asegurar_paquetes = asegurar_paquetes
-    )
-
-    duracion_total <- round(as.numeric(difftime(Sys.time(), inicio, units = "secs")), 1)
-    entorno$registrar("Duración total", "Completado", paste(duracion_total, "segundos"))
-
-    mostrar_enlace <- function(etiqueta, valor) {
-      if (!is.null(valor) && length(valor) == 1 && !is.na(valor) && nzchar(valor)) {
-        message(etiqueta, ": ", valor)
-      }
-    }
+  if (!is.null(resultado)) {
     message("\n================ RESULTADO ================")
-    message("Excel local: ", normalizePath(entorno$archivo_excel))
-    message("Word local: ", normalizePath(entorno$salida_word))
-    message("Carpeta local: ", normalizePath(entorno$carpeta_ejecucion))
-    mostrar_enlace("Excel en Drive", resultado_google$excel_drive)
-    mostrar_enlace("Word en Drive", resultado_google$word_drive)
-    mostrar_enlace("Carpeta Drive", resultado_google$carpeta)
-    mostrar_enlace("Google Sheets", resultado_google$sheets)
-    if (!isTRUE(resultado_google$ok) && !isTRUE(resultado_google$omitido)) {
-      message("Google: no se completó; la salida local permanece disponible.")
+    message("Año: ", resultado$anio)
+    message("Trimestres disponibles: ", paste0("Q", resultado$trimestres_disponibles, collapse = ", "))
+    message("Trimestres generados: ", paste0("Q", resultado$trimestres_generados, collapse = ", "))
+    message("Entregable: ", resultado$entregable)
+    message("Diagnóstico: ", resultado$diagnostico)
+    if (length(resultado$advertencias)) {
+      message("Advertencias: ", paste(resultado$advertencias, collapse = " | "))
     }
+    message("Duración: ", resultado$duracion_segundos, " segundos")
     message("Estado: PROCESO COMPLETADO")
     message("===========================================")
-  }, error = function(e) {
-    estado <<- 1L
-    detalle <- conditionMessage(e)
-    if (exists("registrar", envir = entorno, inherits = FALSE)) {
-      try(entorno$registrar("Resultado", "Error", detalle), silent = TRUE)
-    } else {
-      dir.create(file.path(raiz, "salidas"), recursive = TRUE, showWarnings = FALSE)
-      ruta_error <- file.path(raiz, "salidas", paste0("error_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".log"))
-      writeLines(c(format(Sys.time(), "%Y-%m-%d %H:%M:%S"), detalle), ruta_error, useBytes = TRUE)
-    }
-    message("\nERROR: ", detalle)
-  })
-
+  }
   if (estado != 0L) quit(save = "no", status = estado)
 }

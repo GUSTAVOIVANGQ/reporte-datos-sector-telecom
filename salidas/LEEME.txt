@@ -1,3 +1,4 @@
 Los resultados se crean aquí, dentro de una carpeta nueva por ejecución.
-Puede eliminar ejecuciones anteriores sin afectar el programa.
-Si Google está activo, enlaces_google.txt mostrará los accesos creados.
+Cada carpeta contiene los reportes Word, el diagnóstico de las seis fuentes,
+el control de totales y los archivos de monitoreo.
+Puede eliminar ejecuciones anteriores sin afectar el programa ni la caché CSV.

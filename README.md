@@ -1,174 +1,179 @@
-# Reporte de datos del sector de telecomunicaciones — v1.3.0
+# Reporte de Datos del Sector de Telecomunicaciones — v3.0.0
 
-Aplicación en R para generar el reporte Word y respaldar automáticamente la ejecución en Google Drive y Google Sheets.
+Aplicación en R que descarga, valida y procesa seis fuentes del Banco de Información de Telecomunicaciones (BIT) para generar el reporte Word del año seleccionado.
 
-El Word local es el resultado obligatorio. Si Google no está disponible, el reporte, las gráficas, las tablas y los controles locales permanecen completos.
+## Periodicidad
 
-## Contenido
+Sí: el documento de referencia es **trimestral**. Al seleccionar un año, el programa puede generar Q1, Q2, Q3 y Q4.
 
-- [Flujo general](#flujo-general)
-- [Requisitos](#requisitos)
-- [Ejecutar](#ejecutar)
-- [Interfaz](#interfaz)
-- [Capturas](#capturas)
-- [Drive y Sheets automáticos](#drive-y-sheets-automáticos)
-- [Información mostrada en terminal](#información-mostrada-en-terminal)
-- [Resultados locales](#resultados-locales)
-- [Modo automático](#modo-automático)
-- [Archivos esenciales](#archivos-esenciales)
-- [Historial de cambios](#historial-de-cambios)
-- [Autor](#autor)
+- En las cinco fuentes mensuales toma el cierre de marzo, junio, septiembre y diciembre.
+- En ingresos toma `TRIM = 1, 2, 3, 4` y conserva únicamente `I_ANUAL_TRIM = Trimestral`.
+- Un trimestre se genera solo cuando las seis secciones contienen el cierre requerido.
+- La opción `todos` produce únicamente los trimestres comunes completos y documenta los faltantes.
 
-## Flujo general
+## Fuentes
 
-```mermaid
-flowchart TD
-    A["Abrir programa"] --> B{"¿Seleccionó Excel?"}
-    B -- No --> C["Usar Excel 2026Q1 de prueba"]
-    B -- Sí --> D["Usar Excel seleccionado"]
-    C --> E["Validar y generar"]
-    D --> E
-    E --> F["Guardar todo localmente"]
-    F --> G{"¿Drive disponible?"}
-    G -- Sí --> H["Subir resultados"]
-    G -- No --> I["Continuar solo local"]
-    H --> J["Mostrar resultado"]
-    I --> J
-```
+El archivo `config/reporte-datos-sector-telecomunicaciones.xlsx` contiene los enlaces. El programa identifica cada fuente por el nombre del CSV, no por la posición de la fila.
+
+| Sección | CSV | Periodo usado |
+|---|---|---|
+| Líneas activas de telefonía móvil | `TD_LINEAS_TELMOVIL_ITE_VA.csv` | Mes 3, 6, 9 o 12 |
+| Accesos activos a internet móvil | `TD_LINEAS_INTMOVIL_ITE_VA.csv` | Mes 3, 6, 9 o 12 |
+| Ingresos | `TD_INGRESOS_TELECOM_ITE_VA.csv` | Trimestre 1, 2, 3 o 4 |
+| Líneas del servicio fijo de telefonía | `TD_LINEAS_TELFIJA_ITE_VA.csv` | Mes 3, 6, 9 o 12 |
+| Accesos a internet fijo | `TD_ACC_BAF_ITE_VA.csv` | Mes 3, 6, 9 o 12 |
+| Accesos a televisión restringida | `TD_ACC_TVRES_ITE_VA.csv` | Mes 3, 6, 9 o 12 |
+
+Las copias de referencia recibidas están en `entrada/datos_bit/`.
+
+## Cobertura comprobada en las copias incluidas
+
+2024 tiene los cuatro cierres trimestrales en las seis fuentes, por lo que es el año predeterminado y se pueden generar sus cuatro reportes.
+
+2025 no tiene todavía cobertura común en las copias incluidas: telefonía fija solo contiene Q1 e internet fijo no contiene 2025. Las demás fuentes sí llegan a Q4. Esta condición no está codificada de forma permanente: cada ejecución vuelve a leer los CSV y, si se permite acceso a red, intenta actualizarlos desde el BIT.
+
+Algunas filas oficiales de 2024 tienen el total vacío. Para no perder todo el trimestre, el motor las trata como cero y las registra en `diagnostico_fuentes.csv`, `control_ejecucion.csv` y `advertencias.txt`. No se oculta esta imputación.
+
+## Descarga y caché
+
+Para cada una de las seis fuentes:
+
+1. Busca el nombre canónico en `entrada/datos_bit/`.
+2. Si no existe, descarga el enlace del catálogo.
+3. Antes de sustituir la caché, comprueba que el archivo descargado sea un CSV legible y tenga el esquema requerido.
+4. Si el archivo existe pero no contiene el año/trimestre solicitado, intenta una actualización una vez.
+5. Si la red falla y hay una copia local válida, conserva esa copia y emite una advertencia.
+6. Si no existe una copia válida, detiene el proceso con un mensaje explícito.
+
+La opción **Forzar actualización** descarga las seis fuentes antes de procesar. La opción **sin red** permite una ejecución totalmente local y reproducible.
+
+## Validaciones
+
+| Comprobación | Acción |
+|---|---|
+| Archivo inexistente | Descarga automática si la red está permitida |
+| Descarga corrupta o esquema incompleto | No reemplaza una caché válida; informa el error |
+| Año sin observaciones | Estado `Ausente`; no genera ese trimestre |
+| Año con algunos cierres | Estado `Parcial`; genera solo trimestres comunes |
+| Cierre trimestral ausente en una sección | Omite ese trimestre en modo `todos`; bloquea una solicitud individual |
+| Total vacío/no numérico en una fila publicada | Imputa cero, cuenta la incidencia y advierte |
+| Valor negativo en ingresos | Lo conserva como ajuste posterior y lo registra |
+| Valor negativo en líneas o accesos | Detiene ese trimestre |
+| Fila exactamente duplicada | La conserva como está publicada y registra el conteo |
+| Totales de tabla y de grupo | Deben conciliar antes de modificar el Word |
+| Estructura del Word | Verifica las seis tablas, campos, imágenes y estructura interna del DOCX |
+
+Estas reglas permiten comparar después las cifras del BIT con el reporte histórico sin borrar ajustes posteriores de los operadores.
 
 ## Requisitos
 
 - R 4.1 o superior.
-- Windows, macOS o Linux (el programa detecta el sistema operativo automáticamente, por ejemplo para abrir la carpeta de resultados).
-- Conexión a internet: para instalar paquetes la primera vez y para usar Drive/Sheets.
-- Paquetes de R: `shiny`, `readxl`, `xml2` y `zip` (se instalan automáticamente si faltan); `googledrive` y `googlesheets4` solo si se usa el respaldo en Google.
-- Cuenta personal de Google, únicamente si se quiere el respaldo automático en Drive y Sheets. No es necesaria para generar el Word local.
+- Windows, macOS o Linux.
+- Internet únicamente para instalar paquetes y descargar/actualizar fuentes.
+- Paquetes: `readxl`, `xml2`, `zip` y `shiny`.
 
-## Ejecutar
+Los paquetes faltantes se instalan automáticamente desde CRAN.
 
-Desde una terminal abierta en la carpeta del proyecto:
+## Uso con interfaz
 
-~~~bash
+Desde la carpeta del proyecto:
+
+```bash
 Rscript main.R
-~~~
+```
 
-Desde RStudio:
+También puede ejecutarse desde RStudio:
 
-~~~r
+```r
 source("main.R")
-~~~
+```
 
-Los paquetes faltantes se instalan automáticamente.
+La interfaz permite seleccionar año, todos los trimestres o uno específico, forzar actualización, desactivar la red y elegir las rutas del catálogo, caché y salida.
 
-## Interfaz
+## Uso automático
 
-La interfaz solo contiene:
+Generar todos los trimestres completos de 2024 con la caché incluida:
 
-- Excel de entrada. Si no se selecciona, utiliza el Excel ficticio incluido.
-- Carpeta local de salida.
-- Cuenta personal de Google.
-- Botón **Generar reporte**.
-- Botón **Descargar Word**.
-- Botón **Abrir carpeta**.
+```bash
+Rscript main.R --automatico --anio=2024 --trimestre=todos --sin-red
+```
 
-El registro detallado no aparece en la interfaz; se muestra en la terminal o consola de RStudio.
+Generar solo Q4 y actualizar las fuentes si hace falta:
 
-## Capturas
+```bash
+Rscript main.R --automatico --anio=2024 --trimestre=4
+```
 
-**Interfaz**
+Forzar la descarga de las seis fuentes:
 
-![Interfaz de la aplicación](screenshots/interface.png)
+```bash
+Rscript main.R --automatico --anio=2024 --trimestre=todos --actualizar
+```
 
-**Reporte generado (Word)**
+Usar ubicaciones diferentes:
 
-![Página 1 del reporte generado](screenshots/report_one.png)
-![Página 2 del reporte generado](screenshots/report_two.png)
+```bash
+Rscript main.R --automatico \
+  --anio=2024 \
+  --trimestre=todos \
+  --catalogo="ruta/reporte-datos-sector-telecomunicaciones.xlsx" \
+  --cache="ruta/datos_bit" \
+  --salidas="ruta/salidas"
+```
 
-## Drive y Sheets automáticos
+Ayuda y prueba rápida:
 
-Al generar, el programa solicita o reutiliza la autorización de la cuenta indicada y usa estos valores fijos:
+```bash
+Rscript main.R --ayuda
+Rscript tests/prueba_motor.R
+```
 
-| Configuración | Valor automático |
-| --- | --- |
-| Carpeta principal | `Reporte_de_Datos_del_Sector_de_Telecomunicaciones` |
-| Subcarpeta | Periodo, versión, fecha y hora de la ejecución |
-| Subida a Drive | Excel, Word, PNG, CSV y controles |
-| Google Sheets | `Control` y `Tabla_1` a `Tabla_6` |
+## Resultados
 
-Si la carpeta principal no existe, se crea en Mi unidad. La interfaz no pregunta nombre de carpeta, ID, tipos de archivo ni pestañas.
+Cada ejecución crea una carpeta independiente:
 
-La primera ejecución puede abrir el navegador para seleccionar la cuenta y aceptar permisos. Si un token anterior tiene permisos insuficientes, el programa intenta renovarlo automáticamente.
+```text
+salidas/ejecucion_2024_AAAAMMDD_HHMMSS_PID/
+├── Reportes_Telecomunicaciones_2024_Q1_Q2_Q3_Q4.zip
+├── diagnostico_fuentes.csv
+├── control_ejecucion.csv
+├── resumen_totales.csv
+├── advertencias.txt                 # solo cuando existen incidencias
+├── reportes/
+│   ├── Reporte_Telecomunicaciones_2024Q1_vBIT.docx
+│   ├── Reporte_Telecomunicaciones_2024Q2_vBIT.docx
+│   ├── Reporte_Telecomunicaciones_2024Q3_vBIT.docx
+│   └── Reporte_Telecomunicaciones_2024Q4_vBIT.docx
+└── monitoreo/
+    └── 2024QX/
+        ├── tabla_1.csv ... tabla_6.csv
+        └── grafica_1.png ... grafica_6.png
+```
 
-No se utiliza una cuenta de servicio ni una llave JSON. La autorización OAuth se guarda en la caché personal de R y no debe incluirse al entregar el proyecto.
+El ZIP anual incluye los Word y los tres archivos CSV de control. Si se solicita un solo trimestre, el entregable principal es el DOCX individual y los controles permanecen en la carpeta de ejecución.
 
-## Información mostrada en terminal
+## Archivos principales
 
-La terminal registra de forma descriptiva:
+- `main.R`: interfaz o línea de comandos.
+- `app.R`: interfaz Shiny.
+- `fuentes_bit.R`: catálogo, descarga, codificación, cobertura, validación y agregación.
+- `generar_reporte.R`: orquestación anual, gráficas, Word y controles.
+- `motor_word_plantilla.R`: sustitución de controles de contenido en la plantilla histórica.
+- `config/reporte-datos-sector-telecomunicaciones.xlsx`: catálogo de enlaces.
+- `entrada/datos_bit/`: caché local de las seis fuentes.
+- `plantilla/Plantilla_Reporte_Telecom_Automatizable.docx`: diseño Word original automatizado.
+- `ejemplo/Reporte_Telecomunicaciones_2024Q4_vBIT.docx`: salida de referencia verificada visualmente.
+- `tests/prueba_motor.R`: prueba local de cobertura y conciliación.
 
-- Validación del Excel y conciliación de totales.
-- Creación de tablas CSV y gráficas PNG.
-- Creación y validación del Word.
-- Cuenta autorizada y carpeta de Drive utilizada.
-- Cantidad de archivos subidos y pestañas creadas.
-- Advertencias, duración local y duración total.
-- Ruta del Excel local, Word y carpeta local.
-- Enlace del Excel y Word en Drive.
-- Enlace de la carpeta de Drive.
-- Enlace del Google Sheet.
+## Criterio de comparación
 
-Los mismos registros se conservan en `ejecucion.log`, `control_ejecucion.csv` y `enlaces_google.txt` dentro de la carpeta de cada ejecución.
+Las cifras nuevas se calculan siempre desde los CSV vigentes del BIT. Por ello pueden diferir del Word histórico debido a correcciones posteriores, reclasificaciones, filas duplicadas o cambios en la integración de grupos. `control_ejecucion.csv` conserva los totales procesados y la huella MD5 de cada fuente para que la comparación sea reproducible.
 
-## Resultados locales
+## Autoría
 
-Cada ejecución crea una carpeta nueva dentro de `salidas/` con:
-
-- `Reporte_Telecomunicaciones_...docx`.
-- `monitoreo/grafica_1.png` a `grafica_6.png`.
-- `monitoreo/tabla_1.csv` a `tabla_6.csv`.
-- `control_ejecucion.csv`.
-- `ejecucion.log`.
-- `enlaces_google.txt`, cuando Google termina correctamente.
-
-## Modo automático
-
-Sin interfaz y usando los archivos incluidos:
-
-~~~bash
-Rscript main.R --automatico
-~~~
-
-Con rutas personalizadas:
-
-~~~bash
-Rscript main.R --automatico "ruta/datos.xlsx" "ruta/plantilla.docx" "ruta/salidas"
-~~~
-
-En modo automático, Google reutiliza una cuenta previamente autorizada. Para desactivarlo en una ejecución técnica puede definirse `GOOGLE_ENABLED=false`.
-
-## Archivos esenciales
-
-- `main.R`: único punto de entrada.
-- `app.R`: interfaz mínima y autorización personal.
-- `generar_reporte.R`: validación, gráficas y Word.
-- `google_api.R`: respaldo automático en Drive y Sheets.
-- `entrada/`: Excel ficticio predeterminado.
-- `plantilla/`: plantilla Word automatizable.
-- `salidas/`: resultados de cada ejecución.
-- `screenshots/`: capturas usadas en este README.
-
-## Historial de cambios
-
-El detalle de cada versión está en [CHANGELOG.md](CHANGELOG.md).
-
-## Autor
-
-Proyecto desarrollado para:
-
-- Dirección Ejecutiva de Indicadores (DEI)
-
-Desarrolladores:
+Proyecto desarrollado para la Dirección Ejecutiva de Indicadores (DEI).
 
 - Gustavo Ivan Garcia Quiroz
-- Actualizaciones y despliegue en Linux: Equipo de la Dirección Ejecutiva de Indicadores
+- Actualizaciones y despliegue: Equipo de la Dirección Ejecutiva de Indicadores
 
-Contacto: [gustavo.garcia@crt.gob.mx](mailto:gustavo.garcia@crt.gob.mx)
+Contacto: <gustavo.garcia@crt.gob.mx>

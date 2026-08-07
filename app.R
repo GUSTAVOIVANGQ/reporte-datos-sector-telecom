@@ -1,113 +1,91 @@
-# Interfaz local mínima. Se inicia únicamente desde main.R.
+# Interfaz local para generar el reporte anual por trimestres con seis fuentes BIT.
 raiz <- getOption("reporte.raiz", getwd())
-options(shiny.maxRequestSize = 50 * 1024^2)
+options(shiny.maxRequestSize = 100 * 1024^2)
 
-excel_prueba <- file.path(raiz, "entrada", "Entrada_Reporte_Telecom_PRUEBA.xlsx")
-plantilla_defecto <- file.path(
-  raiz, "plantilla", "Plantilla_Reporte_Telecom_Automatizable.docx"
-)
 salidas_defecto <- file.path(raiz, "salidas")
-carpeta_google_defecto <- "Reporte_de_Datos_del_Sector_de_Telecomunicaciones"
-alcances_google <- c(
-  "https://www.googleapis.com/auth/drive",
-  "https://www.googleapis.com/auth/spreadsheets"
-)
-
-log_terminal <- function(etapa, estado, detalle) {
-  message(sprintf(
-    "[%s] [%s] %s - %s",
-    format(Sys.time(), "%Y-%m-%d %H:%M:%S"), estado, etapa, detalle
-  ))
-}
-
-autenticar_google_personal <- function(correo = "", forzar = FALSE) {
-  if (!exists("asegurar_paquetes", mode = "function") ||
-      !asegurar_paquetes(c("googledrive", "googlesheets4"), obligatorios = FALSE)) {
-    stop("No fue posible instalar los paquetes necesarios para Google")
-  }
-  opciones_previas <- options(
-    rlang_interactive = TRUE,
-    gargle_oauth_cache = TRUE,
-    googledrive_quiet = TRUE,
-    googlesheets4_quiet = TRUE
-  )
-  on.exit(options(opciones_previas), add = TRUE)
-
-  correo <- trimws(correo)
-  if (isTRUE(forzar)) {
-    googlesheets4::gs4_deauth()
-    googledrive::drive_deauth()
-  }
-  objetivo <- if (isTRUE(forzar)) NA else if (nzchar(correo)) correo else TRUE
-  googledrive::drive_auth(
-    email = objetivo, scopes = alcances_google, cache = TRUE
-  )
-  googlesheets4::gs4_auth(token = googledrive::drive_token())
-  googledrive::drive_find(n_max = 1)
-  usuario <- googledrive::drive_user()
-  if (is.null(usuario$emailAddress) || !nzchar(usuario$emailAddress)) {
-    stop("Google no devolvió el correo de la cuenta autorizada")
-  }
-  usuario$emailAddress
-}
+catalogo_defecto <- file.path(raiz, "config", "reporte-datos-sector-telecomunicaciones.xlsx")
+cache_defecto <- file.path(raiz, "entrada", "datos_bit")
 
 abrir_directorio <- function(ruta) {
   ruta <- normalizePath(ruta, winslash = "\\", mustWork = TRUE)
   if (.Platform$OS.type == "windows") {
     shell.exec(ruta)
   } else if (identical(Sys.info()[["sysname"]], "Darwin")) {
-    system2("open", shQuote(ruta), wait = FALSE, stdout = FALSE, stderr = FALSE)
+    system2("open", ruta, wait = FALSE, stdout = FALSE, stderr = FALSE)
   } else {
-    system2("xdg-open", shQuote(ruta), wait = FALSE, stdout = FALSE, stderr = FALSE)
+    system2("xdg-open", ruta, wait = FALSE, stdout = FALSE, stderr = FALSE)
   }
   invisible(TRUE)
 }
 
 ui <- shiny::fluidPage(
   shiny::tags$head(
-    shiny::tags$title("Reporte de telecomunicaciones"),
+    shiny::tags$title("Reporte del sector de telecomunicaciones"),
     shiny::tags$style(shiny::HTML("
-      :root { --tinta:#173f43; --verde:#008f98; --fondo:#e9f3f3; }
+      :root { --tinta:#173f43; --verde:#008f98; --fondo:#e9f3f3; --gris:#587477; }
       body { background:linear-gradient(135deg,#f8fbfb,#e4f0f0); color:var(--tinta);
              font-family:'Segoe UI',Arial,sans-serif; min-height:100vh; }
-      .container-fluid { max-width:720px; padding:40px 20px; }
+      .container-fluid { max-width:860px; padding:34px 20px; }
       .panel-app { background:#fff; border-radius:20px; padding:30px;
                    box-shadow:0 16px 42px rgba(23,63,67,.14); }
-      h2 { margin:0 0 24px; font-weight:750; }
+      h2 { margin:0 0 8px; font-weight:750; }
+      .subtitulo { color:var(--gris); margin-bottom:22px; }
       .form-control { min-height:42px; border-radius:10px; border-color:#bdd2d3; }
       .form-control:focus { border-color:var(--verde); box-shadow:0 0 0 3px rgba(0,143,152,.14); }
-      .auto-note { color:#587477; font-size:13px; margin:-4px 0 20px; }
+      .radio-inline { margin-right:18px; }
+      .ayuda { color:var(--gris); font-size:13px; margin:-2px 0 16px; }
+      .opciones { background:#f6fafa; border-radius:12px; padding:14px 16px 5px; margin:12px 0; }
       .btn-run { width:100%; background:var(--verde); border:0; border-radius:11px; color:white;
-                 padding:13px; font-size:16px; font-weight:700; margin-top:4px; }
+                 padding:13px; font-size:16px; font-weight:700; margin-top:8px; }
       .btn-run:hover,.btn-run:focus { background:#007780; color:white; }
       .status-box { margin-top:18px; background:#f2f8f8; border-left:5px solid var(--verde);
-                    border-radius:10px; padding:13px 15px; }
+                    border-radius:10px; padding:13px 15px; white-space:pre-line; }
       .acciones { display:flex; gap:10px; margin-top:14px; }
       .acciones .btn { flex:1; border-radius:10px; padding:10px; }
       @media (max-width:560px) { .container-fluid { padding:18px 10px; }
-                                 .panel-app { padding:22px; } .acciones { flex-direction:column; } }
+        .panel-app { padding:22px; } .acciones { flex-direction:column; } }
     "))
   ),
-  shiny::div(class = "panel-app",
-    shiny::h2("Reporte de telecomunicaciones"),
-    shiny::fileInput(
-      "excel", "Excel de entrada", accept = ".xlsx",
-      buttonLabel = "Seleccionar", placeholder = "Excel de prueba incluido"
+  shiny::div(
+    class = "panel-app",
+    shiny::h2("Reporte de Datos del Sector de Telecomunicaciones"),
+    shiny::div(
+      class = "subtitulo",
+      "Selecciona un año. El sistema comprueba las seis fuentes y genera un Word por trimestre completo."
     ),
+    shiny::numericInput("anio", "Año del reporte", value = 2024, min = 2013, max = 2100, step = 1),
+    shiny::radioButtons(
+      "trimestre", "Reportes a generar",
+      choices = c(
+        "Todos los trimestres completos" = "todos",
+        "Q1" = "1", "Q2" = "2", "Q3" = "3", "Q4" = "4"
+      ),
+      selected = "todos",
+      inline = TRUE
+    ),
+    shiny::div(
+      class = "opciones",
+      shiny::checkboxInput(
+        "actualizar", "Forzar actualización de los seis CSV antes de generar", value = FALSE
+      ),
+      shiny::checkboxInput(
+        "permitir_red", "Descargar o actualizar cuando falten archivos o periodos", value = TRUE
+      )
+    ),
+    shiny::div(
+      class = "ayuda",
+      "Si un CSV local existe pero no contiene el periodo pedido, se intenta actualizarlo. Un trimestre solo se genera cuando las seis secciones tienen datos."
+    ),
+    shiny::textInput("catalogo", "Catálogo de enlaces", value = catalogo_defecto),
+    shiny::textInput("cache", "Carpeta de CSV", value = cache_defecto),
     shiny::textInput("carpeta_salida", "Carpeta de salida", value = salidas_defecto),
-    shiny::textInput(
-      "google_email", "Cuenta Google", value = Sys.getenv("GOOGLE_USER_EMAIL", ""),
-      placeholder = "nombre@gmail.com"
-    ),
-    shiny::div(class = "auto-note", "Drive y Sheets se generan automáticamente."),
     shiny::actionButton(
-      "generar", "Generar reporte", class = "btn-run", icon = shiny::icon("play")
+      "generar", "Validar fuentes y generar", class = "btn-run", icon = shiny::icon("play")
     ),
     shiny::uiOutput("estado"),
-    shiny::div(class = "acciones",
-      shiny::downloadButton(
-        "descargar_word", "Descargar Word", class = "btn-default"
-      ),
+    shiny::div(
+      class = "acciones",
+      shiny::downloadButton("descargar", "Descargar resultado", class = "btn-default"),
       shiny::actionButton(
         "abrir_carpeta", "Abrir carpeta", class = "btn-default",
         icon = shiny::icon("folder-open")
@@ -118,145 +96,86 @@ ui <- shiny::fluidPage(
 
 server <- function(input, output, session) {
   resultado <- shiny::reactiveVal(list(
-    tipo = "listo", mensaje = "Listo.", word = NULL, carpeta = NULL
+    tipo = "listo",
+    mensaje = paste(
+      "Listo. 2024 tiene cobertura completa en los archivos de referencia incluidos.",
+      "La disponibilidad de otros años se vuelve a comprobar al ejecutar."
+    ),
+    entregable = NULL,
+    carpeta = NULL
   ))
-  cuenta_google <- shiny::reactiveVal("")
 
   output$estado <- shiny::renderUI({
     x <- resultado()
-    color <- switch(
-      x$tipo, error = "#b54a4a", ok = "#168160",
-      advertencia = "#d17d22", "#008f98"
-    )
-    shiny::div(
-      class = "status-box", style = paste0("border-left-color:", color, ";"),
-      x$mensaje
-    )
+    color <- switch(x$tipo, error = "#b54a4a", ok = "#168160", advertencia = "#d17d22", "#008f98")
+    shiny::div(class = "status-box", style = paste0("border-left-color:", color, ";"), x$mensaje)
   })
 
   shiny::observeEvent(input$generar, {
-    excel <- if (!is.null(input$excel)) input$excel$datapath else excel_prueba
-    salidas <- trimws(input$carpeta_salida)
-    errores <- character()
-    if (!file.exists(excel)) errores <- c(errores, "No se encontró el Excel.")
-    if (!file.exists(plantilla_defecto)) errores <- c(errores, "No se encontró la plantilla Word.")
-    if (!nzchar(salidas)) errores <- c(errores, "Indica una carpeta de salida.")
-    if (length(errores)) {
-      resultado(list(
-        tipo = "error", mensaje = paste(errores, collapse = " "),
-        word = NULL, carpeta = NULL
-      ))
+    anio <- suppressWarnings(as.integer(input$anio))
+    if (is.na(anio) || anio < 2013L || anio > 2100L) {
+      resultado(list(tipo = "error", mensaje = "Indica un año entre 2013 y 2100.", entregable = NULL, carpeta = NULL))
+      return(invisible(NULL))
+    }
+    rutas <- trimws(c(input$catalogo, input$cache, input$carpeta_salida))
+    if (any(!nzchar(rutas))) {
+      resultado(list(tipo = "error", mensaje = "Completa las tres rutas.", entregable = NULL, carpeta = NULL))
       return(invisible(NULL))
     }
 
-    dir.create(salidas, recursive = TRUE, showWarnings = FALSE)
-    resultado(list(tipo = "proceso", mensaje = "Generando…", word = NULL, carpeta = NULL))
-    log_terminal("Interfaz", "Inicio", paste("Excel seleccionado:", normalizePath(excel)))
-    log_terminal("Interfaz", "Información", paste("Carpeta de salida:", normalizePath(salidas)))
+    resultado(list(
+      tipo = "proceso",
+      mensaje = paste0("Validando seis fuentes y generando el año ", anio, "…"),
+      entregable = NULL,
+      carpeta = NULL
+    ))
 
-    shiny::withProgress(message = "Generando reporte", value = 0.10, {
-      correo_google <- trimws(input$google_email)
-      correo_guardado <- cuenta_google()
-      if (nzchar(correo_guardado) &&
-          (!nzchar(correo_google) || identical(correo_google, correo_guardado))) {
-        correo_google <- correo_guardado
-      } else {
-        log_terminal("Google", "Inicio", "Autorizando la cuenta personal")
-        forzar_inicial <- !nzchar(correo_google)
-        autenticacion <- tryCatch(
-          list(
-            ok = TRUE,
-            correo = autenticar_google_personal(
-              correo_google, forzar = forzar_inicial
-            )
-          ),
-          error = function(e) list(ok = FALSE, mensaje = conditionMessage(e))
-        )
-        if (!isTRUE(autenticacion$ok) && !forzar_inicial) {
-          log_terminal("Google", "Reintento", "Renovando los permisos OAuth")
-          autenticacion <- tryCatch(
-            list(
-              ok = TRUE,
-              correo = autenticar_google_personal(correo_google, forzar = TRUE)
-            ),
-            error = function(e) list(ok = FALSE, mensaje = conditionMessage(e))
-          )
-        }
-        if (isTRUE(autenticacion$ok)) {
-          correo_google <- autenticacion$correo
-          cuenta_google(correo_google)
-          shiny::updateTextInput(session, "google_email", value = correo_google)
-          log_terminal("Google", "Completado", paste("Cuenta autorizada:", correo_google))
-        } else {
-          log_terminal(
-            "Google", "Advertencia",
-            paste(autenticacion$mensaje, "El Word local continuará.")
-          )
-        }
-      }
-      shiny::incProgress(0.20)
-
-      rscript <- file.path(
-        R.home("bin"), if (.Platform$OS.type == "windows") "Rscript.exe" else "Rscript"
+    generado <- shiny::withProgress(message = "Procesando fuentes BIT", value = 0.10, {
+      salida <- tryCatch(
+        ejecutar_generacion(
+          raiz = raiz,
+          anio = anio,
+          trimestre = input$trimestre,
+          carpeta_salidas = input$carpeta_salida,
+          catalogo_excel = input$catalogo,
+          carpeta_cache = input$cache,
+          actualizar = isTRUE(input$actualizar),
+          permitir_red = isTRUE(input$permitir_red)
+        ),
+        error = function(e) e
       )
-      argumentos <- c(
-        shQuote(file.path(raiz, "main.R")), "--automatico",
-        shQuote(excel), shQuote(plantilla_defecto), shQuote(salidas),
-        shQuote("--google-enabled=true"),
-        shQuote(paste0("--google-email=", correo_google)),
-        shQuote(paste0("--google-folder-name=", carpeta_google_defecto)),
-        shQuote("--google-folder-id="),
-        shQuote("--google-upload-files=true"),
-        shQuote("--google-create-sheets=true")
-      )
-      codigo <- tryCatch(
-        system2(rscript, args = argumentos, stdout = "", stderr = ""),
-        error = function(e) {
-          log_terminal("Ejecución", "Error", conditionMessage(e))
-          1L
-        }
-      )
-      shiny::incProgress(0.60)
-
-      carpetas <- list.dirs(salidas, recursive = FALSE, full.names = TRUE)
-      carpetas <- carpetas[file.info(carpetas)$isdir %in% TRUE]
-      ultima <- if (length(carpetas)) {
-        carpetas[which.max(file.info(carpetas)$mtime)]
-      } else {
-        NULL
-      }
-      words <- if (!is.null(ultima)) {
-        list.files(ultima, pattern = "^Reporte_.*\\.docx$", full.names = TRUE)
-      } else {
-        character()
-      }
-      word <- if (length(words)) words[which.max(file.info(words)$mtime)] else NULL
-
-      if (identical(as.integer(codigo), 0L) && !is.null(word)) {
-        resultado(list(
-          tipo = "ok", mensaje = "Reporte completado.",
-          word = word, carpeta = ultima
-        ))
-      } else {
-        resultado(list(
-          tipo = "error", mensaje = "No se completó. Revisa la terminal.",
-          word = NULL, carpeta = ultima
-        ))
-      }
-      shiny::incProgress(0.10)
+      shiny::incProgress(0.90)
+      salida
     })
+
+    if (inherits(generado, "error")) {
+      resultado(list(tipo = "error", mensaje = conditionMessage(generado), entregable = NULL, carpeta = NULL))
+      return(invisible(NULL))
+    }
+
+    q <- paste0("Q", generado$trimestres_generados, collapse = ", ")
+    advertencias <- generado$advertencias
+    mensaje <- paste0(
+      "Proceso completado. Trimestres generados: ", q, ".\n",
+      "Diagnóstico guardado en diagnostico_fuentes.csv.",
+      if (length(advertencias)) paste0("\nAdvertencias: ", paste(advertencias, collapse = " | ")) else ""
+    )
+    resultado(list(
+      tipo = if (length(advertencias)) "advertencia" else "ok",
+      mensaje = mensaje,
+      entregable = generado$entregable,
+      carpeta = generado$carpeta
+    ))
   })
 
-  output$descargar_word <- shiny::downloadHandler(
+  output$descargar <- shiny::downloadHandler(
     filename = function() {
-      ruta <- resultado()$word
-      if (is.null(ruta)) "reporte_no_disponible.docx" else basename(ruta)
+      ruta <- resultado()$entregable
+      if (is.null(ruta)) "reporte_no_disponible.zip" else basename(ruta)
     },
     content = function(destino) {
-      ruta <- resultado()$word
-      shiny::validate(shiny::need(
-        !is.null(ruta) && file.exists(ruta), "Primero genera un reporte."
-      ))
+      ruta <- resultado()$entregable
+      shiny::validate(shiny::need(!is.null(ruta) && file.exists(ruta), "Primero genera el reporte."))
       file.copy(ruta, destino, overwrite = TRUE)
     }
   )
@@ -265,22 +184,13 @@ server <- function(input, output, session) {
     ruta <- resultado()$carpeta
     if (is.null(ruta) || !dir.exists(ruta)) ruta <- trimws(input$carpeta_salida)
     if (!dir.exists(ruta)) dir.create(ruta, recursive = TRUE, showWarnings = FALSE)
-    tryCatch(
-      {
-        abrir_directorio(ruta)
-        log_terminal("Carpeta local", "Completado", normalizePath(ruta))
-      },
-      error = function(e) {
-        log_terminal("Carpeta local", "Error", conditionMessage(e))
-        resultado(list(
-          tipo = "error", mensaje = "No fue posible abrir la carpeta.",
-          word = resultado()$word, carpeta = resultado()$carpeta
-        ))
-      }
-    )
+    tryCatch(abrir_directorio(ruta), error = function(e) {
+      resultado(list(
+        tipo = "error", mensaje = "No fue posible abrir la carpeta.",
+        entregable = resultado()$entregable, carpeta = resultado()$carpeta
+      ))
+    })
   })
 }
 
-shiny::runApp(
-  shiny::shinyApp(ui, server), host = "127.0.0.1", launch.browser = TRUE
-)
+shiny::runApp(shiny::shinyApp(ui, server), host = "127.0.0.1", launch.browser = TRUE)
