@@ -2,6 +2,14 @@
 
 Todos los cambios notables de este proyecto se documentan en este archivo.
 
+## v3.1.0
+
+- Restauración de las seis gráficas de mosaicos proporcionales del documento histórico.
+- Conservación de la geometría, paleta institucional, rótulos internos y dimensiones de imagen del Word de referencia.
+- Ajuste automático de rótulos largos para impedir desbordamientos entre rectángulos.
+- Validación explícita de sección, valores y archivo PNG generado.
+- Ajuste de la plantilla para mantener juntas las líneas de fuente y nota cuando una tabla cambia de altura.
+
 ## v3.0.0
 
 - Integración de las seis fuentes BIT del reporte completo.

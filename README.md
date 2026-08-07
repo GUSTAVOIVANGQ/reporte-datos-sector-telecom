@@ -1,6 +1,8 @@
-# Reporte de Datos del Sector de Telecomunicaciones — v3.0.0
+# Reporte de Datos del Sector de Telecomunicaciones — v3.1.0
 
 Aplicación en R que descarga, valida y procesa seis fuentes del Banco de Información de Telecomunicaciones (BIT) para generar el reporte Word del año seleccionado.
+
+Las seis gráficas reproducen el estilo de mosaicos proporcionales del Word histórico: rectángulos por grupo económico, paleta institucional, rótulos blancos dentro de cada área y dimensiones compatibles con la plantilla. El tamaño de cada rectángulo se recalcula con los datos del trimestre solicitado. Los rótulos se ajustan por ancho y alto; si un área es físicamente demasiado pequeña, se omite únicamente ese rótulo para evitar que invada otro rectángulo.
 
 ## Periodicidad
 
@@ -61,6 +63,7 @@ La opción **Forzar actualización** descarga las seis fuentes antes de procesar
 | Valor negativo en líneas o accesos | Detiene ese trimestre |
 | Fila exactamente duplicada | La conserva como está publicada y registra el conteo |
 | Totales de tabla y de grupo | Deben conciliar antes de modificar el Word |
+| Valores no finitos o negativos en una gráfica | Detiene la creación de esa gráfica con un mensaje explícito |
 | Estructura del Word | Verifica las seis tablas, campos, imágenes y estructura interna del DOCX |
 
 Estas reglas permiten comparar después las cifras del BIT con el reporte histórico sin borrar ajustes posteriores de los operadores.

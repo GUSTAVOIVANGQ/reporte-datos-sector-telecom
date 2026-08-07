@@ -11,50 +11,9 @@ unidades_seccion <- c(
   "líneas", "accesos", "accesos"
 )
 
-guardar_grafica <- function(datos, seccion, ruta) {
-  dir.create(dirname(ruta), recursive = TRUE, showWarnings = FALSE)
-  datos <- datos[is.finite(datos$valor) & datos$valor > 0, , drop = FALSE]
-  if (!nrow(datos)) stop("No hay valores positivos para la gráfica de la sección ", seccion)
-  datos <- datos[order(datos$valor), , drop = FALSE]
-  etiquetas <- mapear(datos$grupo, mapas_grafica[[seccion]])
-  valores <- if (seccion == 3L) datos$valor else datos$valor / 1e6
-  colores_barras <- unname(colores[datos$grupo])
-  colores_barras[is.na(colores_barras)] <- "#3B8C91"
-  unidad <- if (seccion == 3L) "Millones de pesos" else "Millones"
-
-  grDevices::png(ruta, width = 2048, height = 1481, res = 200, bg = "white")
-  on.exit(grDevices::dev.off(), add = TRUE)
-  graphics::par(
-    mar = c(5.0, 12.5, 1.0, 3.2), family = "sans",
-    fg = "#173F43", col.axis = "#365A5D", las = 1
-  )
-  limite <- max(valores) * 1.25
-  posiciones <- graphics::barplot(
-    valores,
-    names.arg = etiquetas,
-    horiz = TRUE,
-    col = colores_barras,
-    border = NA,
-    xlim = c(0, limite),
-    axes = FALSE,
-    cex.names = 0.92,
-    space = 0.42
-  )
-  marcas <- pretty(c(0, max(valores)), n = 6)
-  graphics::abline(v = marcas, col = "#DCE9E9", lwd = 1)
-  graphics::axis(1, at = marcas, labels = fmt_decimal(marcas), cex.axis = 0.82)
-  graphics::text(
-    valores + limite * 0.012,
-    posiciones,
-    labels = fmt_decimal(valores),
-    pos = 4,
-    cex = 0.82,
-    col = "#173F43",
-    xpd = TRUE
-  )
-  graphics::mtext(unidad, side = 1, line = 3.2, cex = 0.90, col = "#365A5D")
-  invisible(ruta)
-}
+# Las gráficas usan el diseño de mosaicos de la plantilla histórica.
+# La implementación vive en motor_word_plantilla.R para mantener en un solo
+# lugar la geometría, los colores y el ajuste de rótulos del documento modelo.
 
 crear_parametros_periodo <- function(anio, trimestre, empresas_otros, version = "vBIT") {
   frase <- paste0(trimestre_texto(trimestre), " trimestre de ", as.integer(anio))

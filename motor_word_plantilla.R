@@ -212,7 +212,8 @@ diseno_rectangulos <- function(datos, seccion) {
   )
 }
 
-ajustar_rotulo <- function(texto, ancho, alto, max_pt = 18, min_pt = 5) {
+ajustar_rotulo <- function(texto, ancho, alto, max_pt = 18, min_pt = 3.5) {
+  if (!is.finite(ancho) || !is.finite(alto) || ancho <= 0 || alto <= 0) return(NULL)
   palabras <- strsplit(texto, " +")[[1]]
   for (pt in seq(max_pt, min_pt, by = -0.5)) {
     gp <- grid::gpar(fontsize = pt, fontface = "bold", fontfamily = "sans", col = "white")
@@ -226,13 +227,30 @@ ajustar_rotulo <- function(texto, ancho, alto, max_pt = 18, min_pt = 5) {
       } else actual <- prueba
     }
     lineas <- c(lineas, actual)
-    hlinea <- grid::convertHeight(grid::grobHeight(grid::textGrob("Ágj", gp = gp)), "npc", valueOnly = TRUE) * 1.18
-    if (length(lineas) * hlinea <= alto) return(list(texto = paste(lineas, collapse = "\n"), gp = gp))
+    anchos_linea <- vapply(lineas, function(linea) {
+      grid::convertWidth(
+        grid::grobWidth(grid::textGrob(linea, gp = gp)),
+        "npc", valueOnly = TRUE
+      )
+    }, numeric(1))
+    texto_final <- paste(lineas, collapse = "\n")
+    alto_rotulo <- grid::convertHeight(
+      grid::grobHeight(grid::textGrob(texto_final, gp = gp)),
+      "npc", valueOnly = TRUE
+    )
+    if (max(anchos_linea) <= ancho * 0.92 && alto_rotulo <= alto * 0.90) {
+      return(list(texto = texto_final, gp = gp))
+    }
   }
   NULL
 }
 
 guardar_grafica <- function(datos, seccion, ruta) {
+  dir.create(dirname(ruta), recursive = TRUE, showWarnings = FALSE)
+  if (!seccion %in% 1:6) stop("La sección de la gráfica debe estar entre 1 y 6")
+  if (any(!is.finite(datos$valor)) || any(datos$valor < 0) || sum(datos$valor) <= 0) {
+    stop("La sección ", seccion, " contiene valores no válidos para la gráfica")
+  }
   d <- diseno_rectangulos(datos, seccion)
   valores <- setNames(datos$valor, datos$grupo)
   etiquetas <- setNames(mapear(datos$grupo, mapas_grafica[[seccion]]), datos$grupo)
@@ -263,6 +281,10 @@ guardar_grafica <- function(datos, seccion, ruta) {
   }
   grid::popViewport()
   grDevices::dev.off()
+  if (!file.exists(ruta) || file.info(ruta)$size <= 0) {
+    stop("No se creó correctamente la gráfica de la sección ", seccion)
+  }
+  invisible(ruta)
 }
 
 valores_texto <- function(param, tablas, datos) {
