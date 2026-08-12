@@ -1,0 +1,7 @@
+Esta carpeta contiene los reportes generados, archivos de control y observabilidad.
+
+En Docker y RHEL debe ser un volumen/directorio persistente con permiso de escritura para el
+usuario del servicio. No agregue sus contenidos al repositorio Git.
+
+observabilidad/aplicacion.jsonl  eventos estructurados
+observabilidad/generaciones.csv métricas de generación

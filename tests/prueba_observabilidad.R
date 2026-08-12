@@ -1,0 +1,20 @@
+#!/usr/bin/env Rscript
+
+argumentos <- commandArgs(trailingOnly = FALSE)
+archivo <- sub("^--file=", "", argumentos[grepl("^--file=", argumentos)])
+raiz <- if (length(archivo)) normalizePath(file.path(dirname(archivo[[1]]), ".."), mustWork = TRUE) else getwd()
+temporal <- tempfile("observabilidad_")
+dir.create(temporal, recursive = TRUE)
+on.exit(unlink(temporal, recursive = TRUE, force = TRUE), add = TRUE)
+Sys.setenv(REPORTE_OBSERVABILIDAD_DIR = temporal)
+options(reporte.raiz = raiz)
+source(file.path(raiz, "observabilidad.R"), encoding = "UTF-8")
+
+registrar_log("INFO", "prueba", "registro estructurado", list(valor = 1L))
+registrar_metrica_generacion(TRUE, 2.5, 2024, "Q1")
+registrar_metrica_generacion(FALSE, 1.0, 2024, "Q2", "prueba")
+metricas <- resumen_metricas()
+stopifnot(metricas$total == 2L, metricas$exitos == 1L, metricas$fallos == 1L)
+linea <- readLines(file.path(temporal, "aplicacion.jsonl"), n = 1L, warn = FALSE)
+stopifnot(jsonlite::validate(linea))
+cat("OK: log JSONL y métricas persistentes válidos.\n")

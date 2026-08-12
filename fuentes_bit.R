@@ -175,7 +175,7 @@ inspeccionar_codificacion <- function(ruta, bytes_muestra = 131072L) {
   # La muestra puede terminar a la mitad de un carácter UTF-8. Se omiten
   # cuatro bytes finales únicamente para esta prueba de codificación.
   contenido_texto <- contenido[contenido != as.raw(0)]
-  if (length(contenido_texto) > 4L) contenido_texto <- head(contenido_texto, -4L)
+  if (length(contenido_texto) > 4L) contenido_texto <- utils::head(contenido_texto, -4L)
   texto <- rawToChar(contenido_texto, multiple = FALSE)
   utf8_valido <- !is.na(suppressWarnings(iconv(texto, from = "UTF-8", to = "UTF-8")))
   list(
@@ -668,8 +668,13 @@ agrupar_periodo <- function(periodo) {
       EMPRESA = .EMPRESA_PRESENTACION,
       CONCESIONARIO = .CONCESIONARIO_PRESENTACION
     )]
+    detalle[, TOTAL_EMPRESA := sum(VALOR, na.rm = TRUE),
+            by = list(GRUPO_CLAVE, EMPRESA)]
     data.table::setorder(por_grupo, -VALOR, GRUPO_CLAVE)
-    data.table::setorder(detalle, GRUPO_CLAVE, -VALOR)
+    data.table::setorder(
+      detalle, GRUPO_CLAVE, -TOTAL_EMPRESA, EMPRESA, -VALOR, CONCESIONARIO
+    )
+    detalle[, TOTAL_EMPRESA := NULL]
     data.table::setDF(por_grupo)
     data.table::setDF(detalle)
     return(list(por_grupo = por_grupo, detalle = detalle))
@@ -693,14 +698,20 @@ agrupar_periodo <- function(periodo) {
     na.rm = TRUE
   )
   names(detalle)[[4]] <- "VALOR"
-  detalle <- detalle[order(detalle$GRUPO_CLAVE, -detalle$VALOR), , drop = FALSE]
+  total_empresa <- ave(
+    detalle$VALOR, detalle$GRUPO_CLAVE, detalle$EMPRESA,
+    FUN = function(x) sum(x, na.rm = TRUE)
+  )
+  detalle <- detalle[order(
+    detalle$GRUPO_CLAVE, -total_empresa, detalle$EMPRESA,
+    -detalle$VALOR, detalle$CONCESIONARIO
+  ), , drop = FALSE]
   list(por_grupo = por_grupo, detalle = detalle)
 }
 
 crear_tabla_simple <- function(resumen, especificacion) {
   filas <- lapply(especificacion$objetivos, function(clave) {
     d <- resumen$detalle[resumen$detalle$GRUPO_CLAVE == clave, , drop = FALSE]
-    d <- d[order(-d$VALOR), , drop = FALSE]
     if (!nrow(d)) {
       d <- data.frame(
         EMPRESA = "", CONCESIONARIO = "", VALOR = 0,
@@ -730,7 +741,6 @@ crear_tabla_simple <- function(resumen, especificacion) {
 
 crear_filas_detalle <- function(resumen, especificacion, clave) {
   d <- resumen$detalle[resumen$detalle$GRUPO_CLAVE == clave, , drop = FALSE]
-  d <- d[order(-d$VALOR), , drop = FALSE]
   total <- sum(d$VALOR)
   if (!nrow(d)) {
     d <- data.frame(

@@ -2,6 +2,79 @@
 
 Todos los cambios notables de este proyecto se documentan en este archivo.
 
+## v3.6.7
+
+- Construcción explícita de los cuatro fragmentos OOXML de cada pie de fuente, sin reutilizar runs
+  incompletos de la plantilla ni depender de que contengan un nodo `w:t`.
+- Conservación de las notas de “Otros” que comparten párrafo con dos pies de fuente.
+- Validación del texto visible y del destino de los 12 hipervínculos antes de empaquetar el DOCX.
+
+## v3.6.6
+
+- Clonado directo de los runs OOXML usados en los pies de fuente, conservando el espacio de nombres
+  `w` requerido por Word y `xml2`.
+- Eliminación de los avisos `Namespace prefix w ... is not defined`; quedó pendiente un run sin
+  nodo de texto en los dos pies que también contienen una nota.
+- Prueba de integración que genera un DOCX temporal y verifica sus 12 hipervínculos de fuente.
+
+## v3.6.5
+
+- Corrección de la caída de Shiny al leer `resultado()` desde `session$onFlushed()` sin un contexto
+  reactivo; la carga inicial ahora usa `shiny::isolate()`.
+- Contención de cualquier error de la vista previa inicial dentro de la sesión, sin terminar el
+  proceso Shiny compartido.
+- Prueba de servidor que abre una sesión y ejecuta el primer flush para detectar esta regresión.
+- Ejecución de los scripts de health check y alertas mediante `/usr/bin/bash`, evitando el error
+  `203/EXEC` por permisos de ejecución bajo `/data`.
+
+## v3.6.4
+
+- Health check periódico basado en estado de `systemd` y puerto local, en lugar de reiniciar Shiny o
+  la API cuando una petición HTTP tarda durante una generación o conversión de vista previa.
+- Segunda comprobación después de cinco segundos antes de reiniciar un servicio realmente inactivo.
+- Inclusión explícita de `iproute` en RHEL para disponer del comando `ss` usado por el monitor.
+
+## v3.6.3
+
+- Espera activa de hasta 60 segundos para los health checks de Plumber y Shiny después de reiniciar
+  los servicios, evitando el falso `Connection refused` durante su arranque normal.
+- Estado y últimas líneas del diario de `systemd` incluidos automáticamente si un servicio no queda
+  disponible dentro del tiempo esperado.
+
+## v3.6.2
+
+- Instalación explícita de `libsodium-devel` y `pkgconf-pkg-config` en RHEL para compilar la
+  dependencia R `sodium` requerida por `plumber`.
+- Diagnóstico temprano cuando EPEL 9 o `libsodium.pc` no están disponibles, antes de iniciar la
+  restauración lenta de `renv`.
+- Inclusión equivalente de `libsodium-dev` en la imagen Docker y documentación para habilitar EPEL
+  9 y CodeReady Builder en RHEL 9.
+
+## v3.6.1
+
+- Agrupación contigua de todos los concesionarios de una misma empresa y combinación vertical de su
+  celda `Empresa`, incluso cuando la fuente BIT publica sus registros separados.
+- Hipervínculos externos reales, azules y subrayados, en las 12 URL de fuente de tablas y gráficas.
+- Validación del motor para impedir empresas divididas en bloques y prueba estructural independiente
+  del DOCX para verificar agrupación, destino, color y subrayado de los enlaces.
+- Conservación del comportamiento correcto de secciones sin datos mediante `-` y “Datos no
+  disponibles”.
+
+## v3.6.0
+
+- Licencia MIT y guía breve `CONTRIBUTING.md`.
+- API REST con `plumber`: salud, fuentes, métricas, generación y descarga segura.
+- Swagger/OpenAPI automático en `/__docs__/` y `/openapi.json`.
+- Interfaz adaptable en dos columnas, con visor PDF del Word existente más reciente a la izquierda y controles a la derecha.
+- Conversión de DOCX a PDF mediante LibreOffice; su ausencia no bloquea la generación ni la descarga.
+- Contenedores reproducibles con R 4.6.1, Python 3.9.25, Pillow 11.3.0 y volúmenes persistentes.
+- `renv.lock`, catálogo de versiones directas certificadas y snapshot CRAN fechado para dependencias transitivas.
+- Exclusión de los CSV pesados del repositorio; descarga bajo demanda desde el catálogo BIT.
+- Logs estructurados JSONL, rotación, métricas de duración/éxito/fallo y alertas por fuente repetida.
+- Alerta `systemd` configurable cuando falla la UI o la API.
+- Servicios RHEL independientes para Shiny y API, ambos con reinicio automático.
+- Compatibilidad RHEL con directorios `lib`/`lib64` de Python y temporales ejecutables en `/data`.
+
 ## v3.4.0
 
 - Lectura selectiva y multihilo de los CSV grandes mediante `data.table::fread()`.

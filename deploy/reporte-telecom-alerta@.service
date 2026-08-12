@@ -1,0 +1,7 @@
+[Unit]
+Description=Alerta por fallo del servicio %i
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/sysconfig/reporte-telecom
+ExecStart=/usr/bin/bash __APP_DIR__/deploy/alerta_servicio.sh %i

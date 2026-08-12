@@ -1,0 +1,27 @@
+[Unit]
+Description=Reporte de Datos del Sector de Telecomunicaciones (Shiny)
+After=network-online.target
+Wants=network-online.target
+OnFailure=reporte-telecom-alerta@%n.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_GROUP__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=-/etc/sysconfig/reporte-telecom
+ExecStartPre=/usr/bin/test -r __APP_DIR__/plantilla/Plantilla_Reporte_Telecom_Automatizable.docx
+ExecStartPre=/usr/bin/test -w __APP_DIR__/salidas
+ExecStart=/usr/bin/Rscript __APP_DIR__/main.R --ui --host=127.0.0.1 --port=__APP_PORT__ --no-browser
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ReadWritePaths=__APP_DIR__
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+[Unit]
+Description=Health check de Reporte Telecom
+After=reporte-telecom.service reporte-telecom-api.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/sysconfig/reporte-telecom
+ExecStart=/usr/bin/bash __APP_DIR__/deploy/verificar_salud.sh

@@ -1,0 +1,14 @@
+.git
+.R
+.Rhistory
+.RData
+.Rproj.user
+renv/library
+renv/staging
+entrada/datos_bit/*.csv
+entrada/datos_bit/_cache_reporte
+salidas/*
+!salidas/LEEME.txt
+logs
+*.zip
+credenciales

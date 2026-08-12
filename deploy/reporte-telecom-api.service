@@ -1,0 +1,25 @@
+[Unit]
+Description=API del Reporte de Datos del Sector de Telecomunicaciones
+After=network-online.target reporte-telecom.service
+Wants=network-online.target
+OnFailure=reporte-telecom-alerta@%n.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_GROUP__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=-/etc/sysconfig/reporte-telecom
+ExecStart=/usr/bin/Rscript __APP_DIR__/api/run_api.R --host=127.0.0.1 --port=__API_PORT__
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ReadWritePaths=__APP_DIR__
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

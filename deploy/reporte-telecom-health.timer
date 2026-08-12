@@ -1,0 +1,11 @@
+[Unit]
+Description=Health check periódico de Reporte Telecom
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=reporte-telecom-health.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

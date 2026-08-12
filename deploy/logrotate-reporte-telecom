@@ -1,0 +1,11 @@
+__APP_DIR__/salidas/observabilidad/*.jsonl {
+    daily
+    rotate 14
+    size 10M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su __APP_USER__ __APP_GROUP__
+}

@@ -20,7 +20,8 @@ try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError as exc:  # pragma: no cover - depende del entorno del usuario
     raise SystemExit(
-        "Falta Pillow. Instálelo con: python -m pip install -r requirements-python.txt"
+        f"No se pudo cargar Pillow ({type(exc).__name__}: {exc}). "
+        "Instálelo con: python -m pip install -r requirements-python.txt"
     ) from exc
 
 

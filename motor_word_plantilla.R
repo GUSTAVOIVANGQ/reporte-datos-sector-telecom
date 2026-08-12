@@ -80,6 +80,16 @@ validar_entrada <- function(tablas) {
     if (any(grepl("operadores consolidados|\\+[0-9]+ más", concesionarios, ignore.case = TRUE))) {
       stop("Tabla_", i, " todavía contiene concesionarios consolidados")
     }
+    empresa <- trimws(as.character(tablas[[i]][[if (i <= 2L) 2L else 3L]]))
+    detalle_empresa <- !grupos %in% c("Otros", "TOTAL", "-") & nzchar(empresa)
+    claves_empresa <- paste(grupos[detalle_empresa], empresa[detalle_empresa], sep = "\r")
+    bloques_empresa <- rle(claves_empresa)$values
+    if (anyDuplicated(bloques_empresa)) {
+      stop(
+        "Tabla_", i,
+        " contiene una Empresa dividida en bloques no consecutivos; sus concesionarios deben agruparse."
+      )
+    }
     if (i != 3L && any(valores < 0, na.rm = TRUE)) stop("Hay valores negativos en Tabla_", i)
     total <- valores[nrow(tablas[[i]])]
     if (is.na(total) || total <= 0) stop("El TOTAL es vacío o no positivo en Tabla_", i)
@@ -193,6 +203,28 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
   doc_xml <- file.path(tmp, "word", "document.xml")
   rel_xml <- file.path(tmp, "word", "_rels", "document.xml.rels")
   doc <- xml2::read_xml(doc_xml)
+  rels <- xml2::read_xml(rel_xml)
+
+  relaciones <- xml2::xml_find_all(rels, ".//*[local-name()='Relationship']")
+  ids_relacion <- xml2::xml_attr(relaciones, "Id")
+  numeros_rid <- suppressWarnings(as.integer(sub("^rId", "", ids_relacion)))
+  contador_rid <- if (any(is.finite(numeros_rid))) max(numeros_rid, na.rm = TRUE) else 0L
+
+  agregar_relacion_hipervinculo <- function(url) {
+    contador_rid <<- contador_rid + 1L
+    rid <- paste0("rId", contador_rid)
+    relacion <- xml2::xml_root(xml2::read_xml(paste0(
+      '<Relationship xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'
+    )))
+    xml2::xml_set_attrs(relacion, c(
+      Id = rid,
+      Type = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+      Target = as.character(url),
+      TargetMode = "External"
+    ))
+    xml2::xml_add_child(xml2::xml_root(rels), relacion, .copy = TRUE)
+    rid
+  }
 
   rellenar_controles <- function(xml) {
     sdts <- xml2::xml_find_all(xml, ".//w:sdt", ns)
@@ -262,6 +294,29 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
       for (j in 2:length(nodos)) xml2::xml_text(nodos[[j]]) <- ""
     }
     invisible(NULL)
+  }
+
+  crear_run_fuente <- function(texto, negrita = FALSE, enlace = FALSE) {
+    propiedades <- c(
+      if (enlace) '<w:rStyle w:val="Hyperlink"/>' else "",
+      if (negrita) '<w:b w:val="1"/><w:bCs w:val="1"/>' else "",
+      if (enlace) '<w:color w:val="0000FF"/>' else "",
+      '<w:sz w:val="18"/><w:szCs w:val="18"/>',
+      if (enlace) '<w:u w:val="single"/>' else "",
+      '<w:rtl w:val="0"/>'
+    )
+    run <- xml2::xml_root(xml2::read_xml(paste0(
+      '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+      '<w:rPr>', paste0(propiedades, collapse = ""), '</w:rPr>',
+      '<w:t xml:space="preserve"></w:t>',
+      '</w:r>'
+    )))
+    nodo_texto <- xml2::xml_find_first(run, "./w:t", ns)
+    if (inherits(nodo_texto, "xml_missing")) {
+      stop("No se pudo construir el nodo de texto de un pie de fuente")
+    }
+    xml2::xml_text(nodo_texto) <- enc2utf8(as.character(texto))
+    run
   }
 
   reconstruir_tabla <- function(tabla_xml, datos, seccion) {
@@ -350,7 +405,7 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
     if (startsWith(texto, "Tabla 3.") && grepl("\\|$", texto)) {
       nodos_texto <- xml2::xml_find_all(parrafo, ".//w:t", ns)
       ultimo <- nodos_texto[[length(nodos_texto)]]
-      xml2::xml_text(ultimo) <- enc2utf8(sub("\\|$", "", xml2::xml_text(ultimo)))
+      xml2::xml_text(ultimo) <- sub("\\|$", "", xml2::xml_text(ultimo))
     }
     keep_next <- xml2::xml_find_first(parrafo, "./w:pPr/w:keepNext", ns)
     keep_lines <- xml2::xml_find_first(parrafo, "./w:pPr/w:keepLines", ns)
@@ -369,35 +424,97 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
     stop("La plantilla debe contener 12 pies de fuente; se encontraron ", length(parrafos_fuente))
   }
   urls_pies <- rep(as.character(urls), each = 2L)
+  ids_url <- setNames(character(length(urls)), as.character(urls))
+  for (url in unique(as.character(urls))) {
+    ids_url[[url]] <- agregar_relacion_hipervinculo(url)
+  }
   for (i in seq_along(parrafos_fuente)) {
-    nodos <- xml2::xml_find_all(parrafos_fuente[[i]], ".//w:t", ns)
-    textos_nodos <- xml2::xml_text(nodos)
-    indice_texto <- if (identical(textos_nodos[[1]], "Fuente:")) 2L else 3L
-    if (length(nodos) < indice_texto) stop("Pie de fuente sin estructura editable")
-    espacio_inicial <- if (indice_texto == 2L) " " else ""
-    xml2::xml_text(nodos[[indice_texto]]) <- enc2utf8(paste0(
-      espacio_inicial,
-      "Elaboración propia con información de los operadores de telecomunicaciones, disponible en ",
-      urls_pies[[i]], ". "
-    ))
+    parrafo <- parrafos_fuente[[i]]
+    contenido_original <- xml2::xml_find_all(parrafo, "./*[not(self::w:pPr)]", ns)
+    # Dos pies de la plantilla contienen la nota de “Otros” después de un
+    # salto de línea en el mismo párrafo. Se conserva ese bloque completo y
+    # solo se reconstruye la línea de fuente que lo precede.
+    contenido_nota <- xml2::xml_find_all(
+      parrafo,
+      "./w:r[w:br][1] | ./w:r[w:br][1]/following-sibling::*",
+      ns
+    )
+    xml2::xml_add_child(
+      parrafo,
+      crear_run_fuente("Fuente:", negrita = TRUE),
+      .copy = TRUE
+    )
+    xml2::xml_add_child(
+      parrafo,
+      crear_run_fuente(
+        " Elaboración propia con información de los operadores de telecomunicaciones, disponible en "
+      ),
+      .copy = TRUE
+    )
+
+    url <- urls_pies[[i]]
+    hipervinculo <- xml2::xml_root(xml2::read_xml(paste0(
+      '<w:hyperlink xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ',
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ',
+      'r:id="', ids_url[[url]], '"/>'
+    )))
+    xml2::xml_add_child(
+      hipervinculo,
+      crear_run_fuente(url, enlace = TRUE),
+      .copy = TRUE
+    )
+    xml2::xml_add_child(parrafo, hipervinculo, .copy = TRUE)
+    xml2::xml_add_child(parrafo, crear_run_fuente(". "), .copy = TRUE)
+    for (nodo_nota in contenido_nota) {
+      xml2::xml_add_child(parrafo, nodo_nota, .copy = TRUE)
+    }
+    xml2::xml_remove(contenido_original)
   }
 
-  rels <- xml2::read_xml(rel_xml)
-  xml2::xml_ns_strip(rels)
   for (i in 1:6) {
     tag <- paste0("GRAFICA_", i)
     sdt <- xml2::xml_find_first(doc, paste0(".//w:sdt[w:sdtPr/w:tag[@w:val='", tag, "']]"), ns)
     if (inherits(sdt, "xml_missing")) stop("Falta el campo ", tag, " en la plantilla")
     blip <- xml2::xml_find_first(sdt, ".//a:blip", ns)
     rid <- xml2::xml_attr(blip, "r:embed", ns)
-    rel <- xml2::xml_find_first(rels, paste0(".//Relationship[@Id='", rid, "']"))
+    rel <- xml2::xml_find_first(
+      rels, paste0(".//*[local-name()='Relationship'][@Id='", rid, "']")
+    )
     destino <- xml2::xml_attr(rel, "Target")
     if (!file.copy(graficas[i], file.path(tmp, "word", destino), overwrite = TRUE)) {
       stop("No se pudo sustituir ", tag)
     }
   }
 
+  hipervinculos_fuente <- lapply(parrafos_fuente, function(parrafo) {
+    xml2::xml_find_first(parrafo, "./w:hyperlink", ns)
+  })
+  if (length(hipervinculos_fuente) != 12L || any(vapply(
+      hipervinculos_fuente, inherits, logical(1), what = "xml_missing"
+    ))) {
+    stop("No se insertaron los 12 hipervínculos de fuente esperados")
+  }
+  textos_hipervinculo <- vapply(hipervinculos_fuente, function(x) {
+    paste(xml2::xml_text(xml2::xml_find_all(x, ".//w:t", ns)), collapse = "")
+  }, character(1))
+  if (!identical(unname(textos_hipervinculo), unname(urls_pies))) {
+    stop("El texto visible de los hipervínculos no coincide con las URL del catálogo")
+  }
+  ids_fuente <- vapply(hipervinculos_fuente, function(x) {
+    xml2::xml_attr(x, "r:id", ns)
+  }, character(1))
+  relaciones_fuente <- vapply(ids_fuente, function(rid) {
+    relacion <- xml2::xml_find_first(
+      rels, paste0(".//*[local-name()='Relationship'][@Id='", rid, "']")
+    )
+    if (inherits(relacion, "xml_missing")) "" else xml2::xml_attr(relacion, "Target")
+  }, character(1))
+  if (!identical(unname(relaciones_fuente), unname(urls_pies))) {
+    stop("Los hipervínculos de fuente no coinciden con las URL del catálogo")
+  }
+
   xml2::write_xml(doc, doc_xml)
+  xml2::write_xml(rels, rel_xml)
   pies <- list.files(file.path(tmp, "word"), pattern = "^footer.*\\.xml$", full.names = TRUE)
   for (pie_xml in pies) {
     pie <- xml2::read_xml(pie_xml)

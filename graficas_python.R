@@ -11,27 +11,8 @@ resolver_python <- function() {
   ))
   candidatos <- candidatos[nzchar(candidatos)]
 
-  # En Windows, buscar también en ubicaciones comunes como fallback.
-  if (.Platform$OS.type == "windows") {
-    rutas_extra <- c(
-      file.path(Sys.getenv("LOCALAPPDATA"), "Programs", "Python",
-                list.files(file.path(Sys.getenv("LOCALAPPDATA"), "Programs", "Python"),
-                           pattern = "^Python3", full.names = FALSE)),
-      Sys.glob("C:/Python3*/python.exe"),
-      Sys.glob(file.path(Sys.getenv("USERPROFILE"), "Downloads",
-                         "python-*-embed-*/python.exe"))
-    )
-    rutas_extra <- unique(c(
-      file.path(rutas_extra, "python.exe")[dir.exists(rutas_extra)],
-      rutas_extra[!dir.exists(rutas_extra)]
-    ))
-    rutas_extra <- rutas_extra[file.exists(rutas_extra) & !dir.exists(rutas_extra)]
-    candidatos <- unique(c(candidatos, rutas_extra))
-  }
-
   for (candidato in candidatos) {
-    # Descartar directorios que coincidan con el nombre (e.g. ./python/).
-    ruta <- if (file.exists(candidato) && !dir.exists(candidato)) {
+    ruta <- if (file.exists(candidato)) {
       normalizePath(candidato, winslash = "/", mustWork = TRUE)
     } else {
       unname(Sys.which(candidato))
@@ -46,7 +27,32 @@ resolver_python <- function() {
     ))
     estado <- attr(prueba, "status")
     if (is.null(estado) || identical(as.integer(estado), 0L)) {
-      return(list(comando = ruta, prefijo = prefijo, version = paste(prueba, collapse = " ")))
+      codigo_rutas <- paste0(
+        "import os,sysconfig; ",
+        "p=[sysconfig.get_path('purelib'),sysconfig.get_path('platlib')]; ",
+        "print(os.pathsep.join(dict.fromkeys(x for x in p if x)))"
+      )
+      rutas <- suppressWarnings(system2(
+        ruta,
+        args = c(prefijo, "-c", shQuote(codigo_rutas)),
+        stdout = TRUE,
+        stderr = TRUE
+      ))
+      heredado <- trimws(Sys.getenv(
+        "REPORTE_PYTHONPATH", unset = Sys.getenv("PYTHONPATH", unset = "")
+      ))
+      partes <- unique(c(
+        strsplit(paste(rutas, collapse = ""), .Platform$path.sep, fixed = TRUE)[[1]],
+        strsplit(heredado, .Platform$path.sep, fixed = TRUE)[[1]]
+      ))
+      pythonpath <- paste(partes[nzchar(partes)], collapse = .Platform$path.sep)
+      return(list(
+        comando = ruta,
+        prefijo = prefijo,
+        version = paste(prueba, collapse = " "),
+        pythonpath = pythonpath,
+        env = if (nzchar(pythonpath)) paste0("PYTHONPATH=", pythonpath) else character()
+      ))
     }
   }
   stop(
@@ -59,6 +65,7 @@ ejecutar_script_graficas <- function(python, script, argumentos = character()) {
   salida <- suppressWarnings(system2(
     python$comando,
     args = c(python$prefijo, shQuote(script), argumentos),
+    env = if (is.null(python$env)) character() else python$env,
     stdout = TRUE,
     stderr = TRUE
   ))

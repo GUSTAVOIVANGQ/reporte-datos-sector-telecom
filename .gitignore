@@ -6,8 +6,17 @@
 .Rproj.user/
 salidas/*
 !salidas/LEEME.txt
+entrada/datos_bit/*
+!entrada/datos_bit/README.md
 *.json
+!config/versiones-soportadas.json
+!renv/settings.json
 credenciales/
 __pycache__/
 *.py[cod]
 entrada/datos_bit/_cache_reporte/
+.R/
+renv/library/
+renv/staging/
+logs/
+.env
