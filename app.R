@@ -20,6 +20,7 @@ abrir_directorio <- function(ruta) {
 
 ui <- shiny::fluidPage(
   shiny::tags$head(
+    shiny::tags$meta(charset = "UTF-8"),
     shiny::tags$title("Reporte del sector de telecomunicaciones"),
     shiny::tags$style(shiny::HTML("
       :root { --tinta:#173f43; --verde:#008f98; --fondo:#e9f3f3; --gris:#587477; }
@@ -51,13 +52,16 @@ ui <- shiny::fluidPage(
     shiny::h2("Reporte de Datos del Sector de Telecomunicaciones"),
     shiny::div(
       class = "subtitulo",
-      "Selecciona un año. El sistema comprueba las seis fuentes y genera un Word por trimestre completo."
+      paste(
+        "Selecciona un año. El sistema comprueba las seis fuentes y genera un Word por trimestre",
+        "presente; las secciones aún no publicadas se marcan con '-'."
+      )
     ),
     shiny::numericInput("anio", "Año del reporte", value = 2024, min = 2013, max = 2100, step = 1),
     shiny::radioButtons(
       "trimestre", "Reportes a generar",
       choices = c(
-        "Todos los trimestres completos" = "todos",
+        "Todos los trimestres disponibles" = "todos",
         "Q1" = "1", "Q2" = "2", "Q3" = "3", "Q4" = "4"
       ),
       selected = "todos",
@@ -69,12 +73,17 @@ ui <- shiny::fluidPage(
         "actualizar", "Forzar actualización de los seis CSV antes de generar", value = FALSE
       ),
       shiny::checkboxInput(
-        "permitir_red", "Descargar o actualizar cuando falten archivos o periodos", value = TRUE
+        "permitir_red", "Descargar un CSV cuando falte o reemplazarlo si es inválido", value = TRUE
       )
     ),
     shiny::div(
       class = "ayuda",
-      "Si un CSV local existe pero no contiene el periodo pedido, se intenta actualizarlo. Un trimestre solo se genera cuando las seis secciones tienen datos."
+      paste(
+        "Los CSV locales válidos se reutilizan sin volver a descargarlos.",
+        "Para buscar periodos nuevos en el BIT, usa Forzar actualización.",
+        "Si una sección está ausente, se muestra una advertencia y el reporte continúa.",
+        "R procesa las fuentes y Python crea únicamente las seis gráficas jerárquicas."
+      )
     ),
     shiny::textInput("catalogo", "Catálogo de enlaces", value = catalogo_defecto),
     shiny::textInput("cache", "Carpeta de CSV", value = cache_defecto),
@@ -99,7 +108,7 @@ server <- function(input, output, session) {
     tipo = "listo",
     mensaje = paste(
       "Listo. 2024 tiene cobertura completa en los archivos de referencia incluidos.",
-      "La disponibilidad de otros años se vuelve a comprobar al ejecutar."
+      "La disponibilidad de otros a\u00f1os se vuelve a comprobar al ejecutar."
     ),
     entregable = NULL,
     carpeta = NULL
@@ -108,13 +117,14 @@ server <- function(input, output, session) {
   output$estado <- shiny::renderUI({
     x <- resultado()
     color <- switch(x$tipo, error = "#b54a4a", ok = "#168160", advertencia = "#d17d22", "#008f98")
-    shiny::div(class = "status-box", style = paste0("border-left-color:", color, ";"), x$mensaje)
+    msg <- tryCatch(enc2utf8(x$mensaje), error = function(e) x$mensaje)
+    shiny::div(class = "status-box", style = paste0("border-left-color:", color, ";"), msg)
   })
 
   shiny::observeEvent(input$generar, {
     anio <- suppressWarnings(as.integer(input$anio))
     if (is.na(anio) || anio < 2013L || anio > 2100L) {
-      resultado(list(tipo = "error", mensaje = "Indica un año entre 2013 y 2100.", entregable = NULL, carpeta = NULL))
+      resultado(list(tipo = "error", mensaje = "Indica un a\u00f1o entre 2013 y 2100.", entregable = NULL, carpeta = NULL))
       return(invisible(NULL))
     }
     rutas <- trimws(c(input$catalogo, input$cache, input$carpeta_salida))
@@ -125,7 +135,7 @@ server <- function(input, output, session) {
 
     resultado(list(
       tipo = "proceso",
-      mensaje = paste0("Validando seis fuentes y generando el año ", anio, "…"),
+      mensaje = paste0("Procesando el a\u00f1o ", anio, "..."),
       entregable = NULL,
       carpeta = NULL
     ))
@@ -149,20 +159,43 @@ server <- function(input, output, session) {
     })
 
     if (inherits(generado, "error")) {
-      resultado(list(tipo = "error", mensaje = conditionMessage(generado), entregable = NULL, carpeta = NULL))
+      detalle <- tryCatch(enc2utf8(conditionMessage(generado)), error = function(e) "Error interno")
+      message("ERROR en generacion: ", detalle)
+      # Mensaje representativo para la UI sin detalles internos crudos.
+      msg_ui <- if (grepl("UTF-8|encoding|xml", detalle, ignore.case = TRUE)) {
+        "Error de codificacion al generar el documento. Revise la terminal para mas detalles."
+      } else if (grepl("Python|python", detalle)) {
+        "No se pudo ejecutar Python para crear las graficas. Revise la terminal."
+      } else if (grepl("plantilla|Word|DOCX", detalle, ignore.case = TRUE)) {
+        "Error al procesar la plantilla Word. Revise la terminal para mas detalles."
+      } else if (grepl("fuente|CSV|BIT", detalle, ignore.case = TRUE)) {
+        "Error al procesar las fuentes de datos. Revise la terminal para mas detalles."
+      } else {
+        paste0("Error: ", detalle)
+      }
+      resultado(list(tipo = "error", mensaje = msg_ui, entregable = NULL, carpeta = NULL))
       return(invisible(NULL))
     }
 
     q <- paste0("Q", generado$trimestres_generados, collapse = ", ")
     advertencias <- generado$advertencias
-    mensaje <- paste0(
-      "Proceso completado. Trimestres generados: ", q, ".\n",
-      "Diagnóstico guardado en diagnostico_fuentes.csv.",
-      if (length(advertencias)) paste0("\nAdvertencias: ", paste(advertencias, collapse = " | ")) else ""
+    # Imprimir todo el detalle en la terminal.
+    message("Proceso completado. Trimestres generados: ", q)
+    message("Diagnostico guardado en diagnostico_fuentes.csv")
+    if (length(advertencias)) {
+      message("Advertencias:")
+      for (adv in advertencias) message("  - ", tryCatch(enc2utf8(adv), error = function(e) adv))
+    }
+    message("Entregable: ", generado$entregable)
+    message("Duracion: ", generado$duracion_segundos, " s")
+    # Mensaje representativo y limpio para la UI.
+    mensaje_ui <- paste0(
+      "Proceso completado. Trimestres generados: ", q, ".",
+      if (length(advertencias)) paste0("\n", length(advertencias), " advertencia(s); consulte la terminal.") else ""
     )
     resultado(list(
       tipo = if (length(advertencias)) "advertencia" else "ok",
-      mensaje = mensaje,
+      mensaje = mensaje_ui,
       entregable = generado$entregable,
       carpeta = generado$carpeta
     ))

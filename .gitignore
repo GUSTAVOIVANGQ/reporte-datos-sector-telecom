@@ -8,3 +8,6 @@ salidas/*
 !salidas/LEEME.txt
 *.json
 credenciales/
+__pycache__/
+*.py[cod]
+entrada/datos_bit/_cache_reporte/

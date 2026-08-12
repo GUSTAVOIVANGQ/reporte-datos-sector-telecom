@@ -34,7 +34,8 @@ mostrar_ayuda <- function() {
     "      Abre la interfaz local.",
     "",
     "  Rscript main.R --automatico --anio=2024 --trimestre=todos",
-    "      Genera Q1, Q2, Q3 y Q4 que estén completos en las seis fuentes.",
+    "      Genera cada trimestre presente en al menos una fuente.",
+    "      Las secciones ausentes se marcan con '-' y producen advertencias.",
     "",
     "  Rscript main.R --automatico --anio=2024 --trimestre=4",
     "      Genera únicamente 2024Q4.",
@@ -47,6 +48,7 @@ mostrar_ayuda <- function() {
     "  --catalogo=RUTA      Excel que contiene los seis enlaces.",
     "  --cache=RUTA         Carpeta de CSV descargados.",
     "  --salidas=RUTA       Carpeta de resultados.",
+    "  --python=RUTA        Ejecutable de Python 3 para crear las gráficas.",
     sep = "\n"
   ), "\n")
 }
@@ -57,7 +59,7 @@ if (any(args_usuario %in% c("--ayuda", "-h", "--help"))) {
 }
 
 modo_ui <- !length(args_usuario) || "--ui" %in% args_usuario
-paquetes_motor <- c("readxl", "xml2", "zip")
+paquetes_motor <- c("readxl", "xml2", "zip", "data.table")
 asegurar_paquetes(if (modo_ui) c(paquetes_motor, "shiny") else paquetes_motor)
 source(file.path(raiz, "generar_reporte.R"), local = globalenv(), encoding = "UTF-8")
 
@@ -71,6 +73,8 @@ if (modo_ui) {
     "--catalogo", file.path(raiz, "config", "reporte-datos-sector-telecomunicaciones.xlsx")
   )
   cache <- valor_opcion("--cache", file.path(raiz, "entrada", "datos_bit"))
+  python <- valor_opcion("--python", "")
+  if (nzchar(trimws(python))) options(reporte.python = trimws(python))
   actualizar <- "--actualizar" %in% args_usuario
   permitir_red <- !"--sin-red" %in% args_usuario
 

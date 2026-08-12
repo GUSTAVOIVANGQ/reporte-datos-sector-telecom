@@ -2,6 +2,40 @@
 
 Todos los cambios notables de este proyecto se documentan en este archivo.
 
+## v3.4.0
+
+- Lectura selectiva y multihilo de los CSV grandes mediante `data.table::fread()`.
+- Detección de codificación limitada a una muestra de 128 KB.
+- Normalización por bloques de archivos UTF-16 o con caracteres NUL, sin cargar el archivo completo en memoria.
+- Caché RDS procesada, sin compresión e invalidada automáticamente cuando cambia el CSV.
+- Transformación de nombres por valores únicos y agregación rápida con `data.table`.
+- Caché de MD5 y reutilización de los datos ya leídos durante descargas y reportes multitrimestre.
+- Eliminación de descargas automáticas repetidas cuando un CSV válido aún no contiene el periodo solicitado.
+- Cronómetros por fuente, por carga total y por trimestre, además de una prueba de benchmark reproducible.
+- Pruebas de equivalencia de resultados, reutilización de caché y reconocimiento de UTF-16.
+
+## v3.3.0
+
+- Tablas de longitud variable con una fila por concesionario publicado en cada GIE principal.
+- Eliminación de “N operadores consolidados”, capacidades fijas y listas truncadas de concesionarios.
+- Conversión de las seis tablas Word de flotantes a elementos en línea para conservar el orden visual.
+- Títulos de tablas y gráficas configurados para mantenerse con el objeto correspondiente.
+- Encabezados repetidos automáticamente cuando una tabla se divide entre páginas.
+- URL específica del CSV BIT en los 12 pies de tabla y gráfica.
+- Selección de trimestres por unión de cobertura: basta con que una fuente contenga el periodo.
+- Secciones ausentes representadas con `-`, advertencia de terminal y gráfico Python de datos no disponibles.
+- Diseño jerárquico Python flexible para grupos publicados con valor cero.
+- Pruebas nuevas para desglose exacto, periodo parcial, marcador de ausencia y paginación del Word.
+
+## v3.2.0
+
+- Migración exclusiva de las seis gráficas jerárquicas a Python y Pillow.
+- Conservación en R de la descarga, validación, agregación, controles y creación del Word.
+- Puente R-Python mediante CSV intermedios auditables con columnas `grupo` y `valor`.
+- Detección configurable de Python 3 y validación previa de Pillow y la fuente tipográfica.
+- Validación Python de grupos faltantes, duplicados, valores, geometría y dimensiones PNG.
+- Pruebas independientes de Python y de la integración R-Python para las seis secciones.
+
 ## v3.1.0
 
 - Restauración de las seis gráficas de mosaicos proporcionales del documento histórico.

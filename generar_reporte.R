@@ -4,6 +4,7 @@
 
 raiz_motor <- getOption("reporte.raiz", getwd())
 source(file.path(raiz_motor, "fuentes_bit.R"), local = globalenv(), encoding = "UTF-8")
+source(file.path(raiz_motor, "graficas_python.R"), local = globalenv(), encoding = "UTF-8")
 source(file.path(raiz_motor, "motor_word_plantilla.R"), local = globalenv(), encoding = "UTF-8")
 
 unidades_seccion <- c(
@@ -11,9 +12,7 @@ unidades_seccion <- c(
   "líneas", "accesos", "accesos"
 )
 
-# Las gráficas usan el diseño de mosaicos de la plantilla histórica.
-# La implementación vive en motor_word_plantilla.R para mantener en un solo
-# lugar la geometría, los colores y el ajuste de rótulos del documento modelo.
+# R prepara los datos y Python crea exclusivamente los seis mosaicos PNG.
 
 crear_parametros_periodo <- function(anio, trimestre, empresas_otros, version = "vBIT") {
   frase <- paste0(trimestre_texto(trimestre), " trimestre de ", as.integer(anio))
@@ -49,14 +48,14 @@ enriquecer_control <- function(control, fuentes, catalogo) {
     control$Ruta_local[filas] <- normalizePath(
       fuentes[[id]]$ruta, winslash = "/", mustWork = TRUE
     )
-    control$MD5[filas] <- unname(tools::md5sum(fuentes[[id]]$ruta))
+    control$MD5[filas] <- fuentes[[id]]$md5
   }
   control
 }
 
 generar_documento_periodo <- function(raiz, fuentes, catalogo, anio, trimestre,
                                       carpeta_reportes, carpeta_monitoreo,
-                                      plantilla) {
+                                      plantilla, entorno_graficas) {
   codigo <- periodo_codigo(anio, trimestre)
   preparado <- preparar_tablas_periodo(fuentes, anio, trimestre)
   tablas <- preparado$tablas
@@ -77,7 +76,11 @@ generar_documento_periodo <- function(raiz, fuentes, catalogo, anio, trimestre,
     )
   }
   graficas <- file.path(monitoreo_periodo, paste0("grafica_", 1:6, ".png"))
-  for (i in 1:6) guardar_grafica(datos[[i]], i, graficas[[i]])
+  for (i in 1:6) {
+    guardar_grafica_python(
+      datos[[i]], i, graficas[[i]], entorno_graficas, periodo = codigo
+    )
+  }
 
   salida <- file.path(
     carpeta_reportes,
@@ -88,14 +91,16 @@ generar_documento_periodo <- function(raiz, fuentes, catalogo, anio, trimestre,
     salida = salida,
     tablas = tablas,
     textos = valores_texto(parametros, tablas, datos),
-    graficas = graficas
+    graficas = graficas,
+    urls = unname(catalogo[names(ESPECIFICACIONES_FUENTES)])
   )
   if (!file.exists(salida) || file.info(salida)$size <= 0) {
     stop("No se creó correctamente el Word: ", salida)
   }
   list(
     reporte = normalizePath(salida, winslash = "/", mustWork = TRUE),
-    control = enriquecer_control(preparado$control, fuentes, catalogo)
+    control = enriquecer_control(preparado$control, fuentes, catalogo),
+    advertencias = preparado$advertencias
   )
 }
 
@@ -119,6 +124,17 @@ trimestres_comunes <- function(fuentes, anio) {
     )
   })
   sort(Reduce(intersect, disponibles))
+}
+
+trimestres_disponibles_reporte <- function(fuentes, anio) {
+  disponibles <- lapply(names(ESPECIFICACIONES_FUENTES), function(id) {
+    trimestres_disponibles(
+      fuentes[[id]]$datos,
+      ESPECIFICACIONES_FUENTES[[id]],
+      anio
+    )
+  })
+  sort(unique(unlist(disponibles, use.names = FALSE)))
 }
 
 escribir_advertencias <- function(advertencias, ruta) {
@@ -162,6 +178,7 @@ ejecutar_generacion <- function(
   dir.create(carpeta_monitoreo, recursive = TRUE, showWarnings = FALSE)
 
   catalogo <- leer_catalogo_fuentes(catalogo_excel)
+  inicio_fuentes <- proc.time()[["elapsed"]]
   cargadas <- cargar_todas_fuentes(
     catalogo = catalogo,
     carpeta_cache = carpeta_cache,
@@ -170,6 +187,10 @@ ejecutar_generacion <- function(
     actualizar = actualizar,
     permitir_red = permitir_red
   )
+  message(sprintf(
+    "Seis fuentes listas en %.2f s.",
+    proc.time()[["elapsed"]] - inicio_fuentes
+  ))
   ruta_diagnostico <- file.path(carpeta_ejecucion, "diagnostico_fuentes.csv")
   utils::write.csv(
     cargadas$diagnostico,
@@ -178,44 +199,46 @@ ejecutar_generacion <- function(
     fileEncoding = "UTF-8"
   )
 
-  comunes <- trimestres_comunes(cargadas$fuentes, anio)
+  disponibles <- trimestres_disponibles_reporte(cargadas$fuentes, anio)
   advertencias <- cargadas$advertencias
   if (modo_todos) {
-    seleccionados <- intersect(solicitado, comunes)
+    seleccionados <- intersect(solicitado, disponibles)
     faltantes <- setdiff(solicitado, seleccionados)
     if (length(faltantes)) {
       advertencias <- c(
         advertencias,
         paste0(
-          "El año ", anio, " no tiene cobertura común para Q",
+          "El año ", anio, " no contiene datos en ninguna fuente para Q",
           paste(faltantes, collapse = ", Q"),
-          ". Solo se generan los trimestres completos."
+          ". Esos trimestres no se generan."
         )
       )
     }
   } else {
     seleccionados <- solicitado
-    if (!all(seleccionados %in% comunes)) {
+    if (!all(seleccionados %in% disponibles)) {
       stop(
         "No puede generarse ", periodo_codigo(anio, seleccionados),
-        " porque una o más secciones carecen del cierre requerido. Consulte ",
+        " porque ninguna de las seis fuentes contiene ese periodo. Consulte ",
         normalizePath(ruta_diagnostico, winslash = "/", mustWork = TRUE)
       )
     }
   }
   if (!length(seleccionados)) {
     stop(
-      "No existe ningún trimestre común a las seis fuentes para ", anio,
+      "No existe ningún trimestre en las seis fuentes para ", anio,
       ". Consulte ", normalizePath(ruta_diagnostico, winslash = "/", mustWork = TRUE)
     )
   }
 
   plantilla <- file.path(raiz, "plantilla", "Plantilla_Reporte_Telecom_Automatizable.docx")
   if (!file.exists(plantilla)) stop("No existe la plantilla Word: ", plantilla)
+  entorno_graficas <- validar_entorno_graficas_python(raiz)
   resultados <- vector("list", length(seleccionados))
   controles <- vector("list", length(seleccionados))
   for (i in seq_along(seleccionados)) {
     q <- seleccionados[[i]]
+    inicio_periodo <- proc.time()[["elapsed"]]
     message(sprintf("[%d/%d] Generando %s", i, length(seleccionados), periodo_codigo(anio, q)))
     generado <- generar_documento_periodo(
       raiz = raiz,
@@ -225,10 +248,16 @@ ejecutar_generacion <- function(
       trimestre = q,
       carpeta_reportes = carpeta_reportes,
       carpeta_monitoreo = carpeta_monitoreo,
-      plantilla = plantilla
+      plantilla = plantilla,
+      entorno_graficas = entorno_graficas
     )
     resultados[[i]] <- generado$reporte
     controles[[i]] <- generado$control
+    advertencias <- c(advertencias, generado$advertencias)
+    message(sprintf(
+      "  %s terminado en %.2f s",
+      periodo_codigo(anio, q), proc.time()[["elapsed"]] - inicio_periodo
+    ))
   }
 
   control <- do.call(rbind, controles)
@@ -294,7 +323,7 @@ ejecutar_generacion <- function(
   list(
     ok = TRUE,
     anio = anio,
-    trimestres_disponibles = comunes,
+    trimestres_disponibles = disponibles,
     trimestres_generados = seleccionados,
     reportes = normalizePath(reportes, winslash = "/", mustWork = TRUE),
     entregable = normalizePath(entregable, winslash = "/", mustWork = TRUE),
