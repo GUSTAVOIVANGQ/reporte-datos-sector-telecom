@@ -76,6 +76,8 @@ REPORTE_HOST=127.0.0.1
 REPORTE_PORT=${APP_PORT}
 REPORTE_API_HOST=127.0.0.1
 REPORTE_API_PORT=${API_PORT}
+REPORTE_DESCARGA_INTENTOS=5
+REPORTE_DESCARGA_TIMEOUT=3600
 TMPDIR=${TMP_BUILD}
 TMP=${TMP_BUILD}
 TEMP=${TMP_BUILD}
@@ -113,8 +115,13 @@ esperar_http() {
   local respuesta=""
   local intento
   for intento in $(seq 1 30); do
-    if respuesta="$(curl --fail --silent "${url}" 2>/dev/null)" && \
-       { [[ -z "${patron}" ]] || grep -q "${patron}" <<<"${respuesta}"; }; then
+    if [[ -z "${patron}" ]] && curl --fail --silent --output /dev/null "${url}"; then
+      echo "${etiqueta} lista después de ${intento} intento(s)."
+      return 0
+    fi
+    if [[ -n "${patron}" ]] && \
+       respuesta="$(curl --fail --silent "${url}" 2>/dev/null)" && \
+       grep -q -- "${patron}" <<<"${respuesta}"; then
       echo "${etiqueta} lista después de ${intento} intento(s)."
       return 0
     fi
@@ -130,5 +137,15 @@ esperar_http "API" "http://127.0.0.1:${API_PORT}/salud" "\"estado\"" \
   reporte-telecom-api.service
 esperar_http "Interfaz" "http://127.0.0.1:${APP_PORT}/" "reporte-telecom-app" \
   reporte-telecom.service
-echo "Despliegue v3.6.7 terminado: http://${SERVER_NAME}/telecom/"
+esperar_http "CSS local" "http://127.0.0.1:${APP_PORT}/reporte-activos/app.css" \
+  "--crt-950" reporte-telecom.service
+esperar_http "JavaScript local" "http://127.0.0.1:${APP_PORT}/reporte-activos/app.js" \
+  "navegacion" reporte-telecom.service
+esperar_http "CSS público" "http://${SERVER_NAME}/telecom/reporte-activos/app.css" \
+  "--crt-950" nginx.service
+esperar_http "JavaScript público" "http://${SERVER_NAME}/telecom/reporte-activos/app.js" \
+  "navegacion" nginx.service
+esperar_http "Logotipo público" "http://${SERVER_NAME}/telecom/reporte-activos/logo_crt_blanco.png" \
+  "" nginx.service
+echo "Despliegue v3.8.3 terminado: http://${SERVER_NAME}/telecom/"
 echo "Swagger: http://${SERVER_NAME}/telecom/api/__docs__/"

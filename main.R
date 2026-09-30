@@ -53,7 +53,7 @@ valor_opcion <- function(nombre, defecto = NULL) {
 
 mostrar_ayuda <- function() {
   cat(paste(
-    "Reporte de Datos del Sector de Telecomunicaciones v3.6.7",
+    "Reporte de Datos del Sector de Telecomunicaciones v3.8.3",
     "",
     "Uso:",
     "  Rscript main.R --ui --host=127.0.0.1 --port=3838",

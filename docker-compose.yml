@@ -5,13 +5,15 @@ services:
       args:
         PYTHON_VERSION: "3.9.25"
         RENV_VERSION: "1.1.4"
-    image: reporte-telecom:3.6.7
+    image: reporte-telecom:3.8.3
     restart: unless-stopped
     ports:
       - "3838:3838"
     environment:
       REPORTE_SERVICIO: ui
       REPORTE_PERMITIR_RED: "true"
+      REPORTE_DESCARGA_INTENTOS: "5"
+      REPORTE_DESCARGA_TIMEOUT: "3600"
       REPORTE_ALERT_WEBHOOK_URL: "${REPORTE_ALERT_WEBHOOK_URL:-}"
     volumes:
       - ./entrada/datos_bit:/app/entrada/datos_bit
@@ -29,13 +31,15 @@ services:
       args:
         PYTHON_VERSION: "3.9.25"
         RENV_VERSION: "1.1.4"
-    image: reporte-telecom:3.6.7
+    image: reporte-telecom:3.8.3
     restart: unless-stopped
     command: ["Rscript", "api/run_api.R", "--host=0.0.0.0", "--port=8000"]
     ports:
       - "8000:8000"
     environment:
       REPORTE_SERVICIO: api
+      REPORTE_DESCARGA_INTENTOS: "5"
+      REPORTE_DESCARGA_TIMEOUT: "3600"
       REPORTE_ALERT_WEBHOOK_URL: "${REPORTE_ALERT_WEBHOOK_URL:-}"
     volumes:
       - ./entrada/datos_bit:/app/entrada/datos_bit

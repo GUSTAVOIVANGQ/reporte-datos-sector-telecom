@@ -79,6 +79,37 @@ normalizar_clave <- function(x) {
   gsub("[[:space:]]+", " ", x)
 }
 
+# Correspondencias presentes en las fuentes BIT suministradas para 2026Q1.
+# Solo resuelven etiquetas ausentes o codificadas: un nombre explícito del
+# CSV se conserva, también en periodos históricos. G999/C000 y C9999/C0000
+# son claves genéricas y nunca se asignan a una empresa por inferencia.
+GRUPOS_BIT_POR_CLAVE <- c(
+  G002 = "DISH-MVS", G003 = "TELEFONICA", G004 = "GRUPO TELEVISA",
+  G006 = "AMERICA MOVIL", G007 = "AT&T", G008 = "MEGACABLE-MCM",
+  G009 = "AXTEL", C584 = "GRUPO SALINAS", C719 = "ALTAN",
+  C804 = "GRUPO WALMART"
+)
+
+resolver_grupos_bit <- function(grupo, clave) {
+  grupo <- transformar_unicos(grupo, normalizar_clave)
+  clave <- transformar_unicos(clave, normalizar_clave)
+  sin_nombre <- is.na(grupo) | grupo %in% c("", "SIN INFORMACION")
+  codificado <- !is.na(grupo) & grepl("^[GC][0-9]+$", grupo)
+  # Si las dos columnas presentan claves distintas, no adivinar el grupo.
+  conflicto <- codificado & !is.na(clave) & nzchar(clave) & grupo != clave
+  if (any(conflicto)) stop("GRUPO y K_GRUPO contienen claves incompatibles")
+  clave_uso <- clave
+  falta_clave <- is.na(clave_uso) | !nzchar(clave_uso)
+  clave_uso[falta_clave & codificado] <- grupo[falta_clave & codificado]
+  nombre <- unname(GRUPOS_BIT_POR_CLAVE[clave_uso])
+  resolver <- (sin_nombre | codificado) & !is.na(nombre)
+  grupo[resolver] <- nombre[resolver]
+  conservar_clave <- sin_nombre & !resolver & !is.na(clave_uso) & nzchar(clave_uso)
+  grupo[conservar_clave] <- clave_uso[conservar_clave]
+  grupo[is.na(grupo) | !nzchar(grupo)] <- "SIN INFORMACION"
+  grupo
+}
+
 presentar_nombre <- function(x) {
   x <- trimws(as.character(x))
   if (!length(x) || is.na(x) || !nzchar(x)) return("Sin información")
@@ -125,7 +156,7 @@ trimestre_texto <- function(trimestre) {
 
 periodo_codigo <- function(anio, trimestre) paste0(as.integer(anio), "Q", as.integer(trimestre))
 
-CACHE_LECTURA_VERSION <- 2L
+CACHE_LECTURA_VERSION <- 4L
 
 firma_archivo <- function(ruta) {
   info <- file.info(ruta)
@@ -395,6 +426,14 @@ leer_csv_fuente <- function(ruta, especificacion, usar_cache = TRUE) {
     )
   }
 
+  # Excel puede añadir un registro de solo separadores al guardar el CSV.
+  # Excluir exclusivamente registros vacíos en todas las columnas leídas.
+  # No confundirlos con una observación real cuyo valor esté vacío o sea cero.
+  vacias <- Reduce(`&`, lapply(datos, function(x) {
+    is.na(x) | !nzchar(trimws(as.character(x)))
+  }))
+  if (any(vacias)) datos <- datos[!vacias, , drop = FALSE]
+
   columnas_texto <- intersect(
     c("FOLIO", "K_GRUPO", "GRUPO", "K_EMPRESA", "EMPRESA", "CONCESIONARIO", "I_ANUAL_TRIM"),
     names(datos)
@@ -416,7 +455,7 @@ leer_csv_fuente <- function(ruta, especificacion, usar_cache = TRUE) {
   empresa[is.na(empresa) | !nzchar(trimws(empresa))] <- "Sin información"
   concesionario <- datos$CONCESIONARIO
   concesionario[is.na(concesionario) | !nzchar(trimws(concesionario))] <- "Sin información"
-  datos$.GRUPO_CLAVE <- transformar_unicos(grupo, normalizar_clave)
+  datos$.GRUPO_CLAVE <- resolver_grupos_bit(grupo, datos$K_GRUPO)
   datos$.EMPRESA_PRESENTACION <- transformar_unicos(empresa, presentar_nombre)
   datos$.CONCESIONARIO_PRESENTACION <- transformar_unicos(concesionario, presentar_nombre)
   attr(datos, "reporte_codificacion") <- codificacion
@@ -509,23 +548,238 @@ diagnosticar_fuente <- function(datos, especificacion, anio, url, ruta, origen, 
   )
 }
 
+entero_entorno_fuentes <- function(nombre, defecto, minimo = 1L, maximo = 86400L) {
+  valor <- suppressWarnings(as.integer(Sys.getenv(nombre, unset = as.character(defecto))))
+  if (is.na(valor)) valor <- as.integer(defecto)
+  max(as.integer(minimo), min(as.integer(maximo), valor))
+}
+
+descargar_archivo_completo <- function(url, temporal, especificacion, reintentos = NULL) {
+  reintentos <- if (is.null(reintentos)) {
+    entero_entorno_fuentes("REPORTE_DESCARGA_INTENTOS", 5L, 1L, 10L)
+  } else {
+    valor <- suppressWarnings(as.integer(reintentos))
+    if (is.na(valor)) valor <- 5L
+    max(1L, min(10L, valor))
+  }
+  timeout <- entero_entorno_fuentes("REPORTE_DESCARGA_TIMEOUT", 3600L, 60L, 86400L)
+  dir.create(dirname(temporal), recursive = TRUE, showWarnings = FALSE)
+  curl <- unname(Sys.which("curl"))
+  errores <- character()
+
+  for (intento in seq_len(reintentos)) {
+    message("  Descarga ", especificacion$archivo, ": intento ", intento, " de ", reintentos)
+    estado <- 1L
+    detalle <- ""
+    if (nzchar(curl)) {
+      salida <- suppressWarnings(tryCatch(
+        system2(
+          curl,
+          c(
+            "--fail", "--location", "--silent", "--show-error",
+            "--connect-timeout", "30", "--max-time", as.character(timeout),
+            "--retry", "2", "--retry-delay", "2", "--retry-all-errors",
+            "--continue-at", "-", "--output", shQuote(temporal), shQuote(url)
+          ),
+          stdout = TRUE, stderr = TRUE
+        ),
+        error = function(e) structure(conditionMessage(e), status = 1L)
+      ))
+      estado <- attr(salida, "status")
+      if (is.null(estado)) estado <- 0L
+      estado <- as.integer(estado)
+      detalle <- paste(as.character(salida), collapse = " ")
+      if (estado != 0L && grepl(
+        "byte ranges|cannot resume|range error", detalle, ignore.case = TRUE
+      )) unlink(temporal, force = TRUE)
+    } else {
+      unlink(temporal, force = TRUE)
+      estado <- suppressWarnings(tryCatch(
+        utils::download.file(url, temporal, mode = "wb", quiet = TRUE),
+        error = function(e) {
+          detalle <<- conditionMessage(e)
+          1L
+        }
+      ))
+    }
+
+    if (identical(as.integer(estado), 0L) && file.exists(temporal) &&
+        is.finite(file.info(temporal)$size) && file.info(temporal)$size > 0) {
+      datos <- tryCatch(
+        leer_csv_fuente(temporal, especificacion, usar_cache = FALSE),
+        error = function(e) e
+      )
+      if (!inherits(datos, "error")) {
+        return(list(
+          datos = datos,
+          bytes = as.numeric(file.info(temporal)$size),
+          filas = nrow(datos),
+          intentos = intento
+        ))
+      }
+      detalle <- paste("El CSV descargado no pasó la validación:", conditionMessage(datos))
+      unlink(temporal, force = TRUE)
+    } else if (!nzchar(detalle)) {
+      detalle <- paste0("la transferencia terminó con código ", estado)
+    }
+    errores <- c(errores, paste0("intento ", intento, ": ", detalle))
+    if (intento < reintentos) Sys.sleep(min(2L * intento, 10L))
+  }
+  stop(
+    "No se obtuvo una copia completa y válida de ", especificacion$archivo, ". ",
+    paste(errores, collapse = " | ")
+  )
+}
+
+adquirir_bloqueo_actualizacion <- function(carpeta_cache) {
+  dir.create(carpeta_cache, recursive = TRUE, showWarnings = FALSE)
+  bloqueo <- file.path(carpeta_cache, ".actualizacion_fuentes.lock")
+  if (dir.exists(bloqueo)) {
+    antiguedad <- suppressWarnings(as.numeric(difftime(
+      Sys.time(), file.info(bloqueo)$mtime, units = "hours"
+    )))
+    if (is.finite(antiguedad) && antiguedad > 6) unlink(bloqueo, recursive = TRUE, force = TRUE)
+  }
+  if (!dir.create(bloqueo, showWarnings = FALSE)) {
+    stop("Ya existe una actualización de fuentes en curso. Espere a que termine.")
+  }
+  writeLines(
+    c(paste0("pid=", Sys.getpid()), paste0("inicio=", format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3%z"))),
+    file.path(bloqueo, "propietario.txt"), useBytes = TRUE
+  )
+  bloqueo
+}
+
+reemplazar_lote_fuentes <- function(preparadas, carpeta_cache, carpeta_etapa) {
+  movidas <- character()
+  respaldos <- character()
+  errores_restauracion <- character()
+  fallo <- NULL
+  for (id in names(preparadas)) {
+    especificacion <- ESPECIFICACIONES_FUENTES[[id]]
+    origen <- preparadas[[id]]$temporal
+    destino <- file.path(carpeta_cache, especificacion$archivo)
+    respaldo <- file.path(carpeta_etapa, paste0(especificacion$archivo, ".anterior"))
+    if (file.exists(destino) && !file.rename(destino, respaldo)) {
+      fallo <- paste("No se pudo respaldar", especificacion$archivo)
+      break
+    }
+    if (file.exists(respaldo)) respaldos[[id]] <- respaldo
+    if (!file.rename(origen, destino)) {
+      if (file.exists(respaldo) && !file.rename(respaldo, destino)) {
+        errores_restauracion <- c(errores_restauracion, especificacion$archivo)
+      }
+      fallo <- paste("No se pudo instalar", especificacion$archivo)
+      break
+    }
+    movidas[[id]] <- destino
+  }
+  if (!is.null(fallo)) {
+    for (id in rev(names(movidas))) {
+      unlink(movidas[[id]], force = TRUE)
+      respaldo <- if (id %in% names(respaldos)) respaldos[[id]] else NULL
+      if (!is.null(respaldo) && file.exists(respaldo)) {
+        if (!file.rename(respaldo, movidas[[id]])) {
+          errores_restauracion <- c(errores_restauracion, basename(movidas[[id]]))
+        }
+      }
+    }
+    if (length(errores_restauracion)) {
+      condicion <- structure(
+        list(
+          message = paste0(
+            fallo, ". No se pudieron restaurar: ",
+            paste(errores_restauracion, collapse = ", "),
+            ". Los respaldos permanecen en ", carpeta_etapa
+          ),
+          call = NULL, carpeta = carpeta_etapa
+        ),
+        class = c("reporte_error_recuperacion", "error", "condition")
+      )
+      stop(condicion)
+    }
+    stop(fallo, ". Se restauraron las copias locales anteriores.")
+  }
+  invisible(movidas)
+}
+
+actualizar_todas_fuentes <- function(catalogo, carpeta_cache, reintentos = NULL,
+                                      progreso = NULL, funcion_descarga = descargar_archivo_completo) {
+  dir.create(carpeta_cache, recursive = TRUE, showWarnings = FALSE)
+  bloqueo <- adquirir_bloqueo_actualizacion(carpeta_cache)
+  on.exit(unlink(bloqueo, recursive = TRUE, force = TRUE), add = TRUE)
+  carpeta_etapa <- tempfile(".actualizacion_", tmpdir = carpeta_cache)
+  dir.create(carpeta_etapa, recursive = TRUE)
+  eliminar_etapa <- TRUE
+  on.exit(if (eliminar_etapa) unlink(carpeta_etapa, recursive = TRUE, force = TRUE), add = TRUE)
+
+  ids <- names(ESPECIFICACIONES_FUENTES)
+  preparadas <- setNames(vector("list", length(ids)), ids)
+  for (i in seq_along(ids)) {
+    id <- ids[[i]]
+    especificacion <- ESPECIFICACIONES_FUENTES[[id]]
+    if (is.function(progreso)) progreso(i, length(ids), especificacion, "descarga")
+    temporal <- file.path(carpeta_etapa, especificacion$archivo)
+    validada <- funcion_descarga(catalogo[[id]], temporal, especificacion, reintentos)
+    preparadas[[id]] <- c(validada[c("bytes", "filas", "intentos")], list(temporal = temporal))
+    rm(validada)
+    invisible(gc(FALSE))
+  }
+
+  if (is.function(progreso)) progreso(length(ids), length(ids), NULL, "reemplazo")
+  incompletas <- ids[!vapply(preparadas, function(x) {
+    file.exists(x$temporal) && is.finite(file.info(x$temporal)$size) &&
+      file.info(x$temporal)$size == x$bytes
+  }, logical(1))]
+  if (length(incompletas)) {
+    stop("El lote temporal cambió antes del reemplazo: ", paste(incompletas, collapse = ", "))
+  }
+  tryCatch(
+    reemplazar_lote_fuentes(preparadas, carpeta_cache, carpeta_etapa),
+    reporte_error_recuperacion = function(e) {
+      eliminar_etapa <<- FALSE
+      stop(e)
+    }
+  )
+  filas <- lapply(ids, function(id) {
+    especificacion <- ESPECIFICACIONES_FUENTES[[id]]
+    destino <- file.path(carpeta_cache, especificacion$archivo)
+    data.frame(
+      id = id,
+      archivo = especificacion$archivo,
+      bytes = as.numeric(file.info(destino)$size),
+      filas = as.integer(preparadas[[id]]$filas),
+      intentos = as.integer(preparadas[[id]]$intentos),
+      md5 = unname(tools::md5sum(destino)),
+      stringsAsFactors = FALSE
+    )
+  })
+  do.call(rbind, filas)
+}
+
 descargar_y_validar_fuente <- function(url, destino, especificacion) {
   dir.create(dirname(destino), recursive = TRUE, showWarnings = FALSE)
-  temporal <- tempfile(paste0(especificacion$id, "_"), fileext = ".csv")
-  on.exit(unlink(temporal), add = TRUE)
-  estado <- utils::download.file(url, temporal, mode = "wb", quiet = TRUE)
-  if (!identical(estado, 0L) && !identical(estado, 0)) stop("La descarga devolvió el código ", estado)
-  datos <- leer_csv_fuente(temporal, especificacion, usar_cache = FALSE)
-  if (!file.copy(temporal, destino, overwrite = TRUE)) {
-    stop("No fue posible guardar la fuente descargada: ", destino)
-  }
+  carpeta_etapa <- tempfile(".descarga_", tmpdir = dirname(destino))
+  dir.create(carpeta_etapa, recursive = TRUE)
+  eliminar_etapa <- TRUE
+  on.exit(if (eliminar_etapa) unlink(carpeta_etapa, recursive = TRUE, force = TRUE), add = TRUE)
+  temporal <- file.path(carpeta_etapa, especificacion$archivo)
+  validada <- descargar_archivo_completo(url, temporal, especificacion)
+  preparadas <- setNames(list(c(
+    validada[c("bytes", "filas", "intentos")], list(temporal = temporal)
+  )), especificacion$id)
+  tryCatch(
+    reemplazar_lote_fuentes(preparadas, dirname(destino), carpeta_etapa),
+    reporte_error_recuperacion = function(e) {
+      eliminar_etapa <<- FALSE
+      stop(e)
+    }
+  )
+  datos <- validada$datos
   guardar_cache_datos(
     datos, destino, especificacion, as.character(attr(datos, "reporte_codificacion"))
   )
-  list(
-    ruta = normalizePath(destino, winslash = "/", mustWork = TRUE),
-    datos = datos
-  )
+  list(ruta = normalizePath(destino, winslash = "/", mustWork = TRUE), datos = datos)
 }
 
 cargar_fuente <- function(especificacion, url, carpeta_cache, anio,
@@ -569,7 +823,7 @@ cargar_fuente <- function(especificacion, url, carpeta_cache, anio,
       advertencias,
       paste0(
         especificacion$archivo, " no contiene Q", paste(faltan, collapse = ",Q"),
-        " de ", anio, ". Se conserva el CSV local; use 'Forzar actualización' ",
+        " de ", anio, ". Se conserva el CSV local; use 'Actualizar los seis CSV' ",
         "cuando el CRT publique una versión nueva."
       )
     )
@@ -831,6 +1085,7 @@ control_sin_datos <- function(especificacion, anio, trimestre) {
     Total_reporte = NA_real_,
     Grupos = 0L,
     Empresas_en_otros = 0L,
+    Otros_sin_identidad = 0L,
     Valores_imputados_cero = 0L,
     Valores_negativos = 0L,
     Filas_duplicadas_exactas = 0L,
@@ -852,6 +1107,15 @@ preparar_tabla_fuente <- function(datos, especificacion, anio, trimestre) {
   }
   fuera <- periodo[!periodo$.GRUPO_CLAVE %in% especificacion$objetivos, , drop = FALSE]
   empresas_otros <- length(unique(fuera$K_EMPRESA[!is.na(fuera$K_EMPRESA) & nzchar(fuera$K_EMPRESA)]))
+  # Una clave genérica sin nombre no permite saber cuántas empresas agrupa.
+  # Conservar sus valores en Otros, sin inventar el conteo de la nota.
+  identidad_ausente <- (is.na(fuera$K_EMPRESA) | fuera$K_EMPRESA %in% c("", "C0000", "C9999")) &
+    (is.na(fuera$EMPRESA) | !nzchar(trimws(fuera$EMPRESA)))
+  # La nota "Otros incluye X empresas" debe mostrarse siempre con un entero.
+  # Las filas sin identidad no inventan empresas: si no hay ninguna otra
+  # empresa identificable, se cuentan como un único grupo sin nombre.
+  otros_sin_identidad <- sum(identidad_ausente)
+  if (empresas_otros == 0L && otros_sin_identidad > 0L) empresas_otros <- 1L
   control <- data.frame(
     Periodo = periodo_codigo(anio, trimestre),
     Seccion = especificacion$orden,
@@ -862,6 +1126,7 @@ preparar_tabla_fuente <- function(datos, especificacion, anio, trimestre) {
     Total_reporte = total / especificacion$divisor,
     Grupos = nrow(resumen$por_grupo),
     Empresas_en_otros = empresas_otros,
+    Otros_sin_identidad = otros_sin_identidad,
     Valores_imputados_cero = sum(periodo$.VALOR_IMPUTADO),
     Valores_negativos = sum(periodo$.VALOR < 0),
     Filas_duplicadas_exactas = sum(duplicated(periodo)),

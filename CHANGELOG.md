@@ -1,6 +1,90 @@
 # Historial de cambios
 
+## v3.8.3 — 2026-09-30
+
+- Unifica las seis tablas con la paleta, tipografía, franjas y separadores horizontales de 2 puntos del reporte CRT 2025Q4.
+- Sustituye las propiedades heredadas de las filas modelo para evitar bordes finos de colores distintos, cierres ausentes en grupos y separadores blancos sobre la franja TOTAL.
+- Conserva las fusiones de grupo/empresa, repite encabezados y mantiene juntos los bloques de grupo que caben en una página.
+- Ajusta márgenes, alturas mínimas y alineación sin agregar contenido ni modificar las cifras. Conserva el archivo de plantilla original.
+- Añade una comprobación de diseño para las seis tablas y comparación exacta de texto con el reporte anterior. Generación completa con los CSV actualizados del caso 2026Q1.
+
+## v3.8.2 — 2026-09-30
+
+- Normaliza bordes, separación entre celdas, anchos y medidas de las seis tablas generadas para evitar separadores blancos sobre fondos de color. Conserva el archivo de plantilla original.
+- Descarta registros completamente vacíos añadidos al exportar los CSV. No elimina ceros, duplicados ni observaciones con datos; no modifica fórmulas ni importes.
+- Incrementa a 4 la versión de caché procesada para aplicar la lectura corregida.
+- Incorpora los CSV actualizados del caso y la opción --datos-zip en la regresión 2026Q1; comprueba filas útiles, bordes de cabeceras y separación cero entre celdas.
+- Generación completa verificada con los datos actualizados y revisión visual de 16 páginas. Los 56 importes por concesionario y los 24 porcentajes concilian con los CSV; el texto del reporte recibido se conserva.
+- Verificación local con R 4.3.3 y renderización mediante LibreOffice; no comprobado en Microsoft Word nativo. La matriz de producción se mantiene.
+
+## v3.8.1 — 2026-09-30
+
+- Resuelve las etiquetas de grupo codificadas en GRUPO mediante K_GRUPO para las fuentes BIT 2026Q1. Conserva los nombres explícitos de los CSV y las claves genéricas en el renglón Otros existente.
+- Invalida automáticamente la caché procesada v2. No modifica los CSV originales ni la plantilla Word.
+- Corrige los datos que alimentan texto, tablas y gráficas de internet fijo y TV restringida.
+- Si una clave genérica no identifica empresas, conserva el importe en Otros y omite solo la nota de conteo no determinable en la copia generada; no agrega avisos al Word.
+- Incluye pruebas con los seis CSV del caso 2026Q1: totales, desglose, porcentajes, detalle, caché antigua y generación completa del DOCX.
+- Verificación local con R 4.3.3, data.table 1.14.10 y xml2 1.3.6. La matriz de dependencias de producción se mantiene; ejecutar la regresión en el servidor para verificar sus versiones instaladas.
+
+
 Todos los cambios notables de este proyecto se documentan en este archivo.
+
+## v3.8.0
+
+- Botón **Actualizar los seis CSV** en la sección de fuentes, con avance y resultado dentro de la
+  interfaz.
+- Descarga reanudable con reintentos, límite configurable y validación completa de estructura y
+  filas antes de aceptar cada fuente.
+- Reemplazo transaccional: se prepara el lote completo y, si alguna fuente falla, se conservan los
+  seis CSV anteriores; un bloqueo compartido impide actualizaciones simultáneas.
+- Endpoint `POST /v1/fuentes/actualizar` para ejecutar la misma operación desde automatizaciones.
+- Registro estructurado de inicio, éxito y fallo; pruebas de conservación del lote anterior y de
+  sustitución de los seis archivos.
+
+## v3.7.4
+
+- Sustitución de `shiny::small()` por `shiny::tags$small()`, compatible con Shiny 1.14, en la
+  ficha del último documento generado.
+- Nuevo logotipo institucional blanco en PNG transparente, conservando la imagen proporcionada.
+- Pruebas de regresión para impedir el uso de la exportación inexistente y verificar formato,
+  transparencia, resolución y publicación pública del logotipo.
+
+## v3.7.3
+
+- Publicación explícita de `www/` mediante `shiny::addResourcePath()` cuando la aplicación se
+  ejecuta como objeto `shinyApp`, corrigiendo la interfaz sin CSS, JavaScript ni logotipo.
+- URL relativas bajo `reporte-activos/`, compatibles con el proxy nginx en `/telecom/`.
+- El despliegue ahora comprueba CSS y JavaScript directamente en Shiny, y CSS, JavaScript y
+  logotipo a través de la URL pública antes de declarar la interfaz lista.
+- Pruebas de regresión para el registro, destino y presencia física de los tres activos.
+
+## v3.7.2
+
+- La prueba Shiny ahora valida conjuntamente las secciones `head` y `html` producidas por
+  `htmltools::renderTags()`, donde `fluidPage()` distribuye los activos de la página.
+- Comprobación adicional de que `www/app.css` y `www/app.js` existen físicamente.
+- Prueba estática de regresión para conservar la inspección completa del documento HTML.
+
+## v3.7.1
+
+- Corrección de la prueba Shiny de interfaz para validar el HTML completo como una sola cadena,
+  evitando un falso negativo cuando `as.character(ui)` devuelve varios fragmentos.
+- Sin cambios funcionales en la interfaz, la generación del reporte ni los servicios desplegados.
+
+## v3.7.0
+
+- Rediseño institucional de la interfaz con navegación lateral, barra superior y área principal de
+  vista previa, siguiendo la propuesta visual de entrega.
+- Secciones funcionales para generación, historial de documentos, disponibilidad de las seis
+  fuentes y configuración/métricas del servicio.
+- Logotipo CRT local, tema claro/oscuro persistente, menú móvil y diseño adaptable a escritorio,
+  tableta y teléfono.
+- Indicador de cuatro etapas, tiempo observado o estimado, avisos de sesión, ayuda y estados con
+  mayor contraste y jerarquía visual.
+- Mejoras de accesibilidad: navegación por teclado, salto al contenido, foco visible, textos
+  alternativos y respeto de la preferencia de movimiento reducido.
+- Pruebas estáticas de activos y resolución del logotipo, además de una prueba Shiny de navegación
+  y carga inicial sin lecturas fuera del contexto reactivo.
 
 ## v3.6.7
 

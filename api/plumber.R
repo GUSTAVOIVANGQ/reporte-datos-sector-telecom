@@ -89,6 +89,49 @@ function() {
   list(fuentes = filas)
 }
 
+#* Descarga, valida y reemplaza transaccionalmente las seis fuentes BIT.
+#* @param req Cuerpo JSON opcional: reintentos (1 a 10 por fuente).
+#* @post /v1/fuentes/actualizar
+#* @parser json
+function(req, res) {
+  cuerpo <- req$body %||% list()
+  reintentos <- suppressWarnings(as.integer(cuerpo$reintentos %||% 5L))
+  if (is.na(reintentos) || reintentos < 1L || reintentos > 10L) {
+    res$status <- 400L
+    return(list(ok = FALSE, error = "reintentos debe estar entre 1 y 10"))
+  }
+  rutas <- api_rutas()
+  inicio <- Sys.time()
+  registrar_log("INFO", "api_actualizacion_fuentes_iniciada", "Actualización solicitada por API")
+  actualizadas <- tryCatch({
+    catalogo <- leer_catalogo_fuentes(rutas$catalogo)
+    actualizar_todas_fuentes(
+      catalogo = catalogo, carpeta_cache = rutas$datos, reintentos = reintentos
+    )
+  }, error = function(e) e)
+  duracion <- as.numeric(difftime(Sys.time(), inicio, units = "secs"))
+  if (inherits(actualizadas, "error")) {
+    detalle <- conditionMessage(actualizadas)
+    registrar_log(
+      "ERROR", "api_actualizacion_fuentes_fallida", detalle,
+      list(duracion_segundos = round(duracion, 2))
+    )
+    res$status <- if (grepl("en curso", detalle, fixed = TRUE)) 409L else 422L
+    return(list(ok = FALSE, error = detalle, archivos_reemplazados = 0L))
+  }
+  registrar_log(
+    "INFO", "api_actualizacion_fuentes_completada", "Se reemplazaron las seis fuentes",
+    list(duracion_segundos = round(duracion, 2), bytes = sum(actualizadas$bytes))
+  )
+  list(
+    ok = TRUE,
+    archivos_reemplazados = nrow(actualizadas),
+    bytes = sum(actualizadas$bytes),
+    duracion_segundos = round(duracion, 2),
+    fuentes = lapply(seq_len(nrow(actualizadas)), function(i) as.list(actualizadas[i, ]))
+  )
+}
+
 #* Métricas acumuladas de generación.
 #* @get /v1/metricas
 function() resumen_metricas()

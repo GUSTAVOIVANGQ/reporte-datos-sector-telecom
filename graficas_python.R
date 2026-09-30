@@ -62,10 +62,31 @@ resolver_python <- function() {
 }
 
 ejecutar_script_graficas <- function(python, script, argumentos = character()) {
+  # En Windows, system2(..., env=...) antepone las entradas como argumentos de
+  # línea de comandos en lugar de establecerlas como variables de entorno.
+  # Se usa Sys.setenv/Sys.unsetenv para garantizar el comportamiento correcto.
+  vars_anteriores <- list()
+  if (!is.null(python$env) && length(python$env) > 0) {
+    for (entrada in python$env) {
+      partes <- strsplit(entrada, "=", fixed = TRUE)[[1]]
+      nombre_var <- partes[[1]]
+      valor_var  <- paste(partes[-1], collapse = "=")
+      vars_anteriores[[nombre_var]] <- Sys.getenv(nombre_var, unset = NA_character_)
+      do.call(Sys.setenv, stats::setNames(list(valor_var), nombre_var))
+    }
+  }
+  on.exit({
+    for (nombre_var in names(vars_anteriores)) {
+      prev <- vars_anteriores[[nombre_var]]
+      if (is.na(prev)) Sys.unsetenv(nombre_var) else {
+        do.call(Sys.setenv, stats::setNames(list(prev), nombre_var))
+      }
+    }
+  }, add = TRUE)
+
   salida <- suppressWarnings(system2(
     python$comando,
     args = c(python$prefijo, shQuote(script), argumentos),
-    env = if (is.null(python$env)) character() else python$env,
     stdout = TRUE,
     stderr = TRUE
   ))

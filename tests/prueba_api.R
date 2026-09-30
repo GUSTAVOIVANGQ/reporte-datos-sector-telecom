@@ -12,7 +12,7 @@ api <- plumber::plumb(ruta_api)
 stopifnot(inherits(api, "Plumber"))
 texto <- readLines(ruta_api, warn = FALSE, encoding = "UTF-8")
 rutas <- c(
-  "@get /salud", "@get /v1/fuentes", "@get /v1/metricas",
+  "@get /salud", "@get /v1/fuentes", "@post /v1/fuentes/actualizar", "@get /v1/metricas",
   "@post /v1/reportes", "@get /v1/reportes/<id>/descarga"
 )
 stopifnot(all(vapply(rutas, function(x) any(grepl(x, texto, fixed = TRUE)), logical(1))))

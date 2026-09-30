@@ -241,6 +241,30 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
       }
     }
   }
+  # La plantilla permanece intacta. En la copia de salida, una nota de
+  # cantidad solo se muestra cuando la fuente permite contar empresas.
+  # No imprimir NA ni convertir una clave genérica en una empresa ficticia.
+  for (s in 1:6) {
+    tag_nota <- sprintf("S%d_OTROS_EMPRESAS", s)
+    conteo <- textos[[tag_nota]]
+    if (length(conteo) != 1L || !is.na(conteo)) next
+    controles_nota <- xml2::xml_find_all(
+      doc, paste0(".//w:sdt[w:sdtPr/w:tag[@w:val='", tag_nota, "']]"), ns
+    )
+    for (control_nota in controles_nota) {
+      parrafo_nota <- xml2::xml_find_first(control_nota, "ancestor::w:p[1]", ns)
+      texto_nota <- paste(xml2::xml_text(xml2::xml_find_all(parrafo_nota, ".//w:t", ns)), collapse = "")
+      if (startsWith(trimws(texto_nota), "Fuente:")) {
+        nodos_nota <- xml2::xml_find_all(
+          parrafo_nota, "./w:r[w:br][1] | ./w:r[w:br][1]/following-sibling::*", ns
+        )
+      } else {
+        nodos_nota <- xml2::xml_find_all(parrafo_nota, "./*[not(self::w:pPr)]", ns)
+      }
+      xml2::xml_remove(nodos_nota)
+    }
+    textos[[tag_nota]] <- ""
+  }
   rellenar_controles(doc)
 
   # Las tablas de la plantilla histórica eran flotantes y tenían un número
@@ -319,6 +343,122 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
     run
   }
 
+  normalizar_acabado_tabla <- function(tabla_xml, seccion) {
+    # Paleta y separadores medidos en el reporte CRT 2025Q4.
+    # Aplicar propiedades completas evita heredar bordes distintos de las
+    # filas modelo y mantiene el mismo acabado en las seis tablas.
+    crear_xml <- function(contenido) {
+      xml2::xml_root(xml2::read_xml(paste0(
+        '<w:raiz xmlns:w="', ns[["w"]], '">', contenido, '</w:raiz>'
+      )))
+    }
+    sustituir_propiedades <- function(nodo, etiqueta, contenido) {
+      xml2::xml_remove(xml2::xml_find_all(nodo, paste0('./w:', etiqueta), ns))
+      raiz <- crear_xml(paste0('<w:', etiqueta, '>', contenido, '</w:', etiqueta, '>'))
+      xml2::xml_add_child(nodo, xml2::xml_children(raiz)[[1]], .where = 0)
+    }
+    borde <- function(lado, color = NULL, grosor = 8L) {
+      if (is.null(color)) return(paste0('<w:', lado, ' w:val="nil"/>'))
+      paste0('<w:', lado, ' w:val="single" w:sz="', grosor,
+             '" w:space="0" w:color="', color, '"/>')
+    }
+    anchos <- as.integer(round(as.numeric(xml2::xml_attr(
+      xml2::xml_find_all(tabla_xml, './w:tblGrid/w:gridCol', ns), 'w:w', ns
+    ))))
+    for (j in seq_along(anchos)) {
+      nodo <- xml2::xml_find_all(tabla_xml, './w:tblGrid/w:gridCol', ns)[[j]]
+      xml2::xml_attr(nodo, 'w:w', ns) <- as.character(anchos[[j]])
+    }
+    sin_bordes <- paste0(vapply(c('top', 'left', 'bottom', 'right', 'insideH', 'insideV'),
+                               borde, character(1)), collapse = '')
+    sustituir_propiedades(tabla_xml, 'tblPr', paste0(
+      '<w:tblW w:w="', sum(anchos), '" w:type="dxa"/>',
+      '<w:jc w:val="left"/><w:tblCellSpacing w:w="0" w:type="dxa"/>',
+      '<w:tblBorders>', sin_bordes, '</w:tblBorders>',
+      '<w:tblLayout w:type="fixed"/>',
+      '<w:tblLook w:val="0000" w:firstRow="0" w:lastRow="0" ',
+      'w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/>'
+    ))
+    filas <- xml2::xml_find_all(tabla_xml, './w:tr', ns)
+    for (i in seq_along(filas)) {
+      cabecera <- i == 1L
+      total <- i == length(filas)
+      altura <- if (cabecera) { if (seccion == 3L) 1040L else 540L } else if (total) 390L else if (seccion <= 3L) 400L else 340L
+      sustituir_propiedades(filas[[i]], 'trPr', paste0(
+        '<w:cantSplit/><w:trHeight w:val="', altura, '" w:hRule="atLeast"/>',
+        if (cabecera) '<w:tblHeader/>' else ''
+      ))
+      sigue_grupo <- FALSE
+      if (!cabecera && !total && i < length(filas)) {
+        siguiente_fusion <- xml2::xml_find_first(filas[[i + 1L]], './w:tc[1]/w:tcPr/w:vMerge', ns)
+        sigue_grupo <- !inherits(siguiente_fusion, 'xml_missing') &&
+          identical(xml2::xml_attr(siguiente_fusion, 'w:val', ns), 'continue')
+      }
+      celdas <- xml2::xml_find_all(filas[[i]], './w:tc', ns)
+      for (j in seq_along(celdas)) {
+        celda <- celdas[[j]]
+        fusion <- xml2::xml_find_first(celda, './w:tcPr/w:vMerge', ns)
+        fusion_xml <- if (inherits(fusion, 'xml_missing')) '' else paste0(
+          '<w:vMerge w:val="', xml2::xml_attr(fusion, 'w:val', ns), '"/>'
+        )
+        fondo <- if (cabecera) {
+          if (j %% 2L == 1L) '098F93' else '1A4043'
+        } else if (total) '308288' else if (
+          j >= length(celdas) - 1L && (i - 1L) %% 2L == 0L
+        ) 'EFEFEF' else 'FFFFFF'
+        bordes <- if (cabecera || total) {
+          # Sin bordes laterales: al exportar a PDF, Word los dibuja como una línea
+          # blanca entre columnas. El fondo de celda ya cubre todo el ancho.
+          # El separador entre la última fila y el TOTAL lo dibuja solo la fila
+          # anterior (borde inferior de 2 pt). Repetirlo como borde superior del
+          # TOTAL hace que Word dibuje dos líneas con un hueco blanco entre ambas.
+          paste0(borde('top', if (total) NULL else fondo, 8L),
+                 borde('left'), borde('bottom', fondo), borde('right'))
+        } else {
+          # Word suprime los separadores interiores de las fusiones verticales.
+          # Definir el mismo borde en todo el bloque garantiza su cierre inferior.
+          paste0(borde('top'), borde('left'), borde('bottom', '7ECCC2', 16L), borde('right'))
+        }
+        margen_v <- if (cabecera) 80L else if (total) 60L else 40L
+        margen_l <- if (cabecera) 160L else if (j == 1L) 100L else 60L
+        margen_r <- if (cabecera) 160L else if (j == length(celdas) || (seccion > 2L && j == 2L)) 100L else 60L
+        sustituir_propiedades(celda, 'tcPr', paste0(
+          '<w:tcW w:w="', anchos[[j]], '" w:type="dxa"/>', fusion_xml,
+          '<w:tcBorders>', bordes, '</w:tcBorders>',
+          '<w:shd w:val="clear" w:color="auto" w:fill="', fondo, '"/>',
+          '<w:tcMar><w:top w:w="', margen_v, '" w:type="dxa"/>',
+          '<w:left w:w="', margen_l, '" w:type="dxa"/>',
+          '<w:bottom w:w="', margen_v, '" w:type="dxa"/>',
+          '<w:right w:w="', margen_r, '" w:type="dxa"/></w:tcMar>',
+          '<w:vAlign w:val="', if (seccion == 3L && !cabecera && !total) 'top' else 'center', '"/>'
+        ))
+        numerica <- j == length(celdas) || (seccion > 2L && j == 2L)
+        alineacion <- if (cabecera) 'center' else if (numerica) 'right' else 'left'
+        for (parrafo in xml2::xml_find_all(celda, './/w:p', ns)) {
+          sustituir_propiedades(parrafo, 'pPr', paste0(
+            if (sigue_grupo) '<w:keepNext/>' else '',
+            '<w:widowControl w:val="0"/>',
+            '<w:spacing w:before="0" w:after="0" w:line="216" w:lineRule="auto"/>',
+            '<w:jc w:val="', alineacion, '"/>'
+          ))
+        }
+        color_texto <- if (cabecera || total) 'FFFFFF' else if (
+          j == 1L || (seccion > 2L && j == 2L)
+        ) '098F93' else '434343'
+        negrita <- cabecera || total || numerica || j == 1L
+        for (run in xml2::xml_find_all(celda, './/w:r', ns)) {
+          sustituir_propiedades(run, 'rPr', paste0(
+            '<w:rFonts w:ascii="Noto Sans" w:hAnsi="Noto Sans" w:cs="Noto Sans"/>',
+            '<w:b w:val="', as.integer(negrita), '"/><w:bCs w:val="', as.integer(negrita), '"/>',
+            '<w:color w:val="', color_texto, '"/>',
+            '<w:sz w:val="', if (cabecera || total) 20L else 18L, '"/>',
+            '<w:szCs w:val="', if (cabecera || total) 20L else 18L, '"/>'
+          ))
+        }
+      }
+    }
+  }
+
   reconstruir_tabla <- function(tabla_xml, datos, seccion) {
     filas_modelo <- xml2::xml_find_all(tabla_xml, "./w:tr", ns)
     if (length(filas_modelo) < 3L) stop("La tabla ", seccion, " no contiene filas modelo")
@@ -383,6 +523,18 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
       }
       escribir_celda(celdas_total[[j]], texto)
     }
+    normalizar_acabado_tabla(tabla_xml, seccion)
+    # Las filas se clonan de una fila modelo: cada control de contenido (sdt)
+    # copiado conserva el mismo w:id. Se reasignan ids únicos en todo el cuerpo.
+    ids_sdt <- xml2::xml_find_all(doc, './/w:sdtPr/w:id', ns)
+    for (k in seq_along(ids_sdt)) {
+      xml2::xml_attr(ids_sdt[[k]], 'w:val', ns) <- as.character(900000L + k)
+    }
+    pie <- xml2::xml_find_first(tabla_xml, 'following-sibling::w:p[1]', ns)
+    espaciado <- xml2::xml_find_first(pie, './w:pPr/w:spacing', ns)
+    if (!inherits(espaciado, 'xml_missing')) {
+      xml2::xml_attr(espaciado, 'w:before', ns) <- '120'
+    }
   }
 
   for (i in 1:6) {
@@ -394,6 +546,27 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
     )
     if (inherits(tabla_xml, "xml_missing")) stop("Falta la tabla ", i, " en la plantilla")
     reconstruir_tabla(tabla_xml, tablas[[i]], i)
+  }
+
+  # Estructura uniforme de pie: "Fuente:" y "Nota:" siempre en párrafos
+  # separados, en las seis tablas y las seis gráficas. La plantilla histórica
+  # tiene la sección 5 con ambos en un mismo párrafo (separados por un salto de
+  # línea); se divide en dos párrafos con el mismo formato que las demás.
+  pies_unidos <- xml2::xml_find_all(
+    doc,
+    ".//w:body/w:p[w:r[w:br] and starts-with(normalize-space(string(.)), 'Fuente:')]",
+    ns
+  )
+  for (pie in pies_unidos) {
+    nota <- xml2::xml_add_sibling(pie, pie, .where = "after", .copy = TRUE)
+    xml2::xml_remove(xml2::xml_find_all(
+      pie, "./w:r[w:br][1] | ./w:r[w:br][1]/following-sibling::*", ns
+    ))
+    xml2::xml_remove(xml2::xml_find_all(
+      nota, "./w:r[w:br][1]/preceding-sibling::*[not(self::w:pPr)] | ./w:r[w:br][1]", ns
+    ))
+    xml2::xml_remove(xml2::xml_find_all(nota, "./w:pPr/w:keepNext | ./w:pPr/w:jc", ns))
+    xml2::xml_remove(xml2::xml_find_all(pie, "./w:pPr/w:jc", ns))
   }
 
   # Mantener cada título con el objeto que le sigue. Las tablas se dejaron en

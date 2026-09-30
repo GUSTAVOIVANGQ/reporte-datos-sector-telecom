@@ -62,6 +62,27 @@ curl -fsS http://127.0.0.1:8000/salud
 curl -fsS http://172.17.42.163/telecom/api/salud
 ```
 
+La descarga completa de cada fuente admite cinco intentos y hasta una hora por transferencia. Los
+valores pueden ajustarse en `/etc/sysconfig/reporte-telecom` sin modificar el código:
+
+```text
+REPORTE_DESCARGA_INTENTOS=5
+REPORTE_DESCARGA_TIMEOUT=3600
+```
+
+Para comprobar en el servidor que un fallo intermedio conserva los seis CSV anteriores y que un
+lote válido sustituye los seis archivos, ejecute:
+
+```bash
+cd /data/gustavo.garcia/reporte-telecom
+sudo -u gustavo.garcia env \
+  R_LIBS_USER=/data/gustavo.garcia/reporte-telecom/.R/library \
+  TMPDIR=/data/gustavo.garcia/reporte-telecom/tmp-build \
+  TMP=/data/gustavo.garcia/reporte-telecom/tmp-build \
+  TEMP=/data/gustavo.garcia/reporte-telecom/tmp-build \
+  /usr/bin/Rscript tests/prueba_actualizacion_fuentes.R
+```
+
 - UI: `http://172.17.42.163/telecom/`
 - API: `http://172.17.42.163/telecom/api/`
 - Swagger: `http://172.17.42.163/telecom/api/__docs__/`

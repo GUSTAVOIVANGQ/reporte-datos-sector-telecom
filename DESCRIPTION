@@ -1,7 +1,7 @@
 Package: reporteDatosSectorTelecom
 Type: Project
 Title: Reporte de Datos del Sector de Telecomunicaciones
-Version: 3.6.7
+Version: 3.8.3
 Authors@R: person("Gustavo Ivan", "Garcia Quiroz", role = c("aut", "cre"), email = "gustavo.garcia@crt.gob.mx")
 Description: Descarga, valida y procesa fuentes BIT para generar reportes Word trimestrales,
     una interfaz Shiny y una API REST auditable.
