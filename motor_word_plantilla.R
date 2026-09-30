@@ -177,6 +177,11 @@ valores_texto <- function(param, tablas, datos) {
       }
     }
     v[[sprintf("S%d_OTROS_EMPRESAS", s)]] <- param[[paste0("empresas_otros_tabla_", s)]]
+    v[[sprintf("S%d_OTROS_SIN_IDENTIFICACION", s)]] <- isTRUE(
+      param[[paste0("otros_sin_identificacion_tabla_", s)]]
+    )
+    fila_otros <- datos[[s]][datos[[s]]$grupo == "Otros" & is.finite(datos[[s]]$valor), , drop = FALSE]
+    v[[sprintf("S%d_OTROS_VALOR", s)]] <- if (nrow(fila_otros)) fila_otros$valor[[1]] else NA_real_
   }
   v
 }
@@ -241,31 +246,52 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
       }
     }
   }
-  # La plantilla permanece intacta. En la copia de salida, una nota de
-  # cantidad solo se muestra cuando la fuente permite contar empresas.
-  # No imprimir NA ni convertir una clave genérica en una empresa ficticia.
+  # La plantilla permanece intacta. En la copia de salida se ajusta la nota
+  # de "Otros": singular/plural y, cuando la fuente usa una clave genérica
+  # sin nombre, se explicita que la empresa/grupo no está identificado.
   for (s in 1:6) {
     tag_nota <- sprintf("S%d_OTROS_EMPRESAS", s)
     conteo <- textos[[tag_nota]]
-    if (length(conteo) != 1L || !is.na(conteo)) next
+    controles_nota <- xml2::xml_find_all(
+      doc, paste0(".//w:sdt[w:sdtPr/w:tag[@w:val='", tag_nota, "']]"), ns
+    )
+    if (length(conteo) != 1L || is.na(conteo)) {
+      for (control_nota in controles_nota) {
+        parrafo_nota <- xml2::xml_find_first(control_nota, "ancestor::w:p[1]", ns)
+        nodos_nota <- xml2::xml_find_all(parrafo_nota, "./*[not(self::w:pPr)]", ns)
+        xml2::xml_remove(nodos_nota)
+      }
+      textos[[tag_nota]] <- ""
+      next
+    }
+  }
+  rellenar_controles(doc)
+
+  # Ajustes que dependen del valor ya materializado dentro del control.
+  for (s in 1:6) {
+    tag_nota <- sprintf("S%d_OTROS_EMPRESAS", s)
+    conteo <- suppressWarnings(as.integer(textos[[tag_nota]]))
+    if (length(conteo) != 1L || is.na(conteo)) next
+    sin_id <- isTRUE(textos[[sprintf("S%d_OTROS_SIN_IDENTIFICACION", s)]])
+    valor_otros <- suppressWarnings(as.numeric(textos[[sprintf("S%d_OTROS_VALOR", s)]]))
     controles_nota <- xml2::xml_find_all(
       doc, paste0(".//w:sdt[w:sdtPr/w:tag[@w:val='", tag_nota, "']]"), ns
     )
     for (control_nota in controles_nota) {
-      parrafo_nota <- xml2::xml_find_first(control_nota, "ancestor::w:p[1]", ns)
-      texto_nota <- paste(xml2::xml_text(xml2::xml_find_all(parrafo_nota, ".//w:t", ns)), collapse = "")
-      if (startsWith(trimws(texto_nota), "Fuente:")) {
-        nodos_nota <- xml2::xml_find_all(
-          parrafo_nota, "./w:r[w:br][1] | ./w:r[w:br][1]/following-sibling::*", ns
-        )
+      previo <- xml2::xml_find_first(control_nota, "preceding-sibling::w:r[1]/w:t", ns)
+      posterior <- xml2::xml_find_first(control_nota, "following-sibling::w:r[1]/w:t", ns)
+      if (sin_id && s == 6L && is.finite(valor_otros) && valor_otros > 0) {
+        xml2::xml_text(previo) <- paste0(" “Otros” incluye ", fmt_entero(valor_otros), " accesos correspondientes a ")
+        xml2::xml_text(posterior) <- if (conteo == 1L) {
+          " empresa sin identificación de grupo económico en la información reportada."
+        } else {
+          " empresas sin identificación de grupo económico en la información reportada."
+        }
       } else {
-        nodos_nota <- xml2::xml_find_all(parrafo_nota, "./*[not(self::w:pPr)]", ns)
+        xml2::xml_text(posterior) <- if (conteo == 1L) " empresa." else " empresas."
       }
-      xml2::xml_remove(nodos_nota)
     }
-    textos[[tag_nota]] <- ""
   }
-  rellenar_controles(doc)
 
   # Las tablas de la plantilla histórica eran flotantes y tenían un número
   # fijo de filas. Eso permitía que Word las colocara antes del título y
@@ -546,27 +572,6 @@ actualizar_word <- function(plantilla, salida, tablas, textos, graficas, urls) {
     )
     if (inherits(tabla_xml, "xml_missing")) stop("Falta la tabla ", i, " en la plantilla")
     reconstruir_tabla(tabla_xml, tablas[[i]], i)
-  }
-
-  # Estructura uniforme de pie: "Fuente:" y "Nota:" siempre en párrafos
-  # separados, en las seis tablas y las seis gráficas. La plantilla histórica
-  # tiene la sección 5 con ambos en un mismo párrafo (separados por un salto de
-  # línea); se divide en dos párrafos con el mismo formato que las demás.
-  pies_unidos <- xml2::xml_find_all(
-    doc,
-    ".//w:body/w:p[w:r[w:br] and starts-with(normalize-space(string(.)), 'Fuente:')]",
-    ns
-  )
-  for (pie in pies_unidos) {
-    nota <- xml2::xml_add_sibling(pie, pie, .where = "after", .copy = TRUE)
-    xml2::xml_remove(xml2::xml_find_all(
-      pie, "./w:r[w:br][1] | ./w:r[w:br][1]/following-sibling::*", ns
-    ))
-    xml2::xml_remove(xml2::xml_find_all(
-      nota, "./w:r[w:br][1]/preceding-sibling::*[not(self::w:pPr)] | ./w:r[w:br][1]", ns
-    ))
-    xml2::xml_remove(xml2::xml_find_all(nota, "./w:pPr/w:keepNext | ./w:pPr/w:jc", ns))
-    xml2::xml_remove(xml2::xml_find_all(pie, "./w:pPr/w:jc", ns))
   }
 
   # Mantener cada título con el objeto que le sigue. Las tablas se dejaron en

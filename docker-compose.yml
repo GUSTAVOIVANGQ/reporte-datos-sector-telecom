@@ -5,7 +5,7 @@ services:
       args:
         PYTHON_VERSION: "3.9.25"
         RENV_VERSION: "1.1.4"
-    image: reporte-telecom:3.8.3
+    image: reporte-telecom:3.8.4
     restart: unless-stopped
     ports:
       - "3838:3838"
@@ -31,7 +31,7 @@ services:
       args:
         PYTHON_VERSION: "3.9.25"
         RENV_VERSION: "1.1.4"
-    image: reporte-telecom:3.8.3
+    image: reporte-telecom:3.8.4
     restart: unless-stopped
     command: ["Rscript", "api/run_api.R", "--host=0.0.0.0", "--port=8000"]
     ports:

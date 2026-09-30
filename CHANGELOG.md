@@ -1,5 +1,13 @@
 # Historial de cambios
 
+## v3.8.4 — 2026-09-30
+
+- Normaliza nombres institucionales y siglas en las tablas: MVS, TV, Última Milla y Cablevisión.
+- Corrige automáticamente singular/plural en las notas de “Otros”.
+- Para registros de TV restringida con clave genérica sin grupo identificado, la nota explicita el volumen incluido y la falta de identificación del grupo económico.
+- Sustituye los valores predeterminados fijos de 2024 por el año actual en Shiny, CLI, API y orquestador.
+- Incorpora la salida 2026Q1 corregida como ejemplo de referencia y amplía la regresión 2026Q1.
+
 ## v3.8.3 — 2026-09-30
 
 - Unifica las seis tablas con la paleta, tipografía, franjas y separadores horizontales de 2 puntos del reporte CRT 2025Q4.

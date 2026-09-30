@@ -9,7 +9,7 @@ RHEL es `/telecom/api/`.
 
 ```json
 {
-  "anio": 2024,
+  "anio": 2026,
   "trimestre": "todos",
   "actualizar": false,
   "permitir_red": true

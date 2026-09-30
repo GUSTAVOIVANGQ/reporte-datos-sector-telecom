@@ -125,7 +125,7 @@ panel_generar <- shiny::tagList(
       shiny::div(
         class = "config-body",
         shiny::numericInput(
-          "anio", "Año del reporte", value = 2024, min = 2013, max = 2100, step = 1
+          "anio", "Año del reporte", value = as.integer(format(Sys.Date(), "%Y")), min = 2013, max = 2100, step = 1
         ),
         shiny::radioButtons(
           "trimestre", "Trimestres a generar",

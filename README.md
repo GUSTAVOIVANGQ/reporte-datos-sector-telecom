@@ -1,4 +1,4 @@
-# Reporte de Datos del Sector de Telecomunicaciones — v3.8.3
+# Reporte de Datos del Sector de Telecomunicaciones — v3.8.4
 
 Aplicación R que descarga, valida y procesa seis fuentes del Banco de Información de
 Telecomunicaciones (BIT) para producir reportes Word trimestrales. R realiza todo el procesamiento y
@@ -30,6 +30,10 @@ Las URL están en `config/reporte-datos-sector-telecomunicaciones.xlsx`. Los CSV
 si un archivo falta, el programa lo descarga. La caché procesada se invalida automáticamente cuando
 cambia el tamaño o la fecha del CSV.
 
+El paquete v3.8.4 entregado incluye además una copia local de los seis CSV usados para la
+regresión **2026Q1** en `entrada/datos_bit/`, de modo que ese trimestre puede reproducirse sin
+descarga de red.
+
 La sección **Fuentes de datos** incluye el botón **Actualizar los seis CSV**. La operación descarga
 cada archivo con reintentos y validación de estructura en un área temporal. Los CSV locales solo se
 reemplazan cuando las seis descargas son completas y válidas; ante cualquier fallo se conserva el
@@ -40,7 +44,7 @@ predeterminada) y `REPORTE_DESCARGA_TIMEOUT` el límite de cada transferencia en
 
 | Componente | Versión certificada |
 |---|---:|
-| Proyecto | 3.8.3 |
+| Proyecto | 3.8.4 |
 | R | 4.6.1 |
 | CPython | 3.9.25 |
 | Pillow | 11.3.0 |
@@ -87,9 +91,9 @@ ruta de recursos Shiny `reporte-activos/`. Este registro explícito permite usar
 ## Línea de comandos
 
 ```bash
-Rscript main.R --automatico --anio=2024 --trimestre=todos
-Rscript main.R --automatico --anio=2024 --trimestre=4 --sin-red
-Rscript main.R --automatico --anio=2024 --trimestre=todos --actualizar
+Rscript main.R --automatico --anio=2026 --trimestre=todos
+Rscript main.R --automatico --anio=2026 --trimestre=1 --sin-red
+Rscript main.R --automatico --anio=2026 --trimestre=todos --actualizar
 ```
 
 Use `Rscript main.R --ayuda` para ver rutas y opciones adicionales.
@@ -116,7 +120,7 @@ Ejemplo:
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/reportes \
   -H 'Content-Type: application/json' \
-  -d '{"anio":2024,"trimestre":"Q4","actualizar":false,"permitir_red":true}'
+  -d '{"anio":2026,"trimestre":"Q1","actualizar":false,"permitir_red":true}'
 ```
 
 Para actualizar las seis fuentes sin generar un reporte:
@@ -255,7 +259,7 @@ Disposición de tabla > Ver líneas de cuadrícula. Estas guías no se imprimen;
 son distintas de los bordes guardados en el documento.
 
 
-## Diseño CRT de las seis tablas en v3.8.3
+## Diseño CRT de las seis tablas en v3.8.4
 
 La generación aplica una definición común de formato basada en las tablas del
 [reporte CRT 2025Q4](https://portal.crt.gob.mx/docs-bin/reportes/reporte-de-datos-del-sector-de-telecomunicaciones/estadistica-2025-q4.pdf):

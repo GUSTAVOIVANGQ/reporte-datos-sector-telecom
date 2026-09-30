@@ -147,5 +147,5 @@ esperar_http "JavaScript público" "http://${SERVER_NAME}/telecom/reporte-activo
   "navegacion" nginx.service
 esperar_http "Logotipo público" "http://${SERVER_NAME}/telecom/reporte-activos/logo_crt_blanco.png" \
   "" nginx.service
-echo "Despliegue v3.8.3 terminado: http://${SERVER_NAME}/telecom/"
+echo "Despliegue v3.8.4 terminado: http://${SERVER_NAME}/telecom/"
 echo "Swagger: http://${SERVER_NAME}/telecom/api/__docs__/"

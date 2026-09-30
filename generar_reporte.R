@@ -14,7 +14,7 @@ unidades_seccion <- c(
 
 # R prepara los datos y Python crea exclusivamente los seis mosaicos PNG.
 
-crear_parametros_periodo <- function(anio, trimestre, empresas_otros, version = "vBIT") {
+crear_parametros_periodo <- function(anio, trimestre, empresas_otros, otros_sin_identificacion = rep(FALSE, 6L), version = "vBIT") {
   frase <- paste0(trimestre_texto(trimestre), " trimestre de ", as.integer(anio))
   parametros <- list(
     reporte = "Reporte de Datos del Sector de Telecomunicaciones",
@@ -30,6 +30,7 @@ crear_parametros_periodo <- function(anio, trimestre, empresas_otros, version = 
   )
   for (i in 1:6) {
     parametros[[paste0("empresas_otros_tabla_", i)]] <- as.integer(empresas_otros[[i]])
+    parametros[[paste0("otros_sin_identificacion_tabla_", i)]] <- isTRUE(otros_sin_identificacion[[i]])
   }
   parametros
 }
@@ -59,7 +60,9 @@ generar_documento_periodo <- function(raiz, fuentes, catalogo, anio, trimestre,
   codigo <- periodo_codigo(anio, trimestre)
   preparado <- preparar_tablas_periodo(fuentes, anio, trimestre)
   tablas <- preparado$tablas
-  parametros <- crear_parametros_periodo(anio, trimestre, preparado$empresas_otros)
+  parametros <- crear_parametros_periodo(
+    anio, trimestre, preparado$empresas_otros, preparado$otros_sin_identificacion
+  )
   validar_parametros(parametros)
   validar_entrada(tablas)
   datos <- lapply(1:6, function(i) datos_seccion(tablas[[i]], i))
@@ -145,7 +148,7 @@ escribir_advertencias <- function(advertencias, ruta) {
 
 ejecutar_generacion <- function(
     raiz,
-    anio = 2024L,
+    anio = as.integer(format(Sys.Date(), "%Y")),
     trimestre = "todos",
     carpeta_salidas = file.path(raiz, "salidas"),
     catalogo_excel = file.path(raiz, "config", "reporte-datos-sector-telecomunicaciones.xlsx"),

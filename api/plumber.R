@@ -142,7 +142,7 @@ function() resumen_metricas()
 #* @parser json
 function(req, res) {
   cuerpo <- req$body %||% list()
-  anio <- suppressWarnings(as.integer(cuerpo$anio %||% 2024L))
+  anio <- suppressWarnings(as.integer(cuerpo$anio %||% as.integer(format(Sys.Date(), "%Y"))))
   trimestre <- as.character(cuerpo$trimestre %||% "todos")
   actualizar <- api_bool(cuerpo$actualizar, FALSE)
   permitir_red <- api_bool(cuerpo$permitir_red, TRUE)

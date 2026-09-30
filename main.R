@@ -53,15 +53,15 @@ valor_opcion <- function(nombre, defecto = NULL) {
 
 mostrar_ayuda <- function() {
   cat(paste(
-    "Reporte de Datos del Sector de Telecomunicaciones v3.8.3",
+    "Reporte de Datos del Sector de Telecomunicaciones v3.8.4",
     "",
     "Uso:",
     "  Rscript main.R --ui --host=127.0.0.1 --port=3838",
-    "  Rscript main.R --automatico --anio=2024 --trimestre=todos",
+    "  Rscript main.R --automatico --anio=2026 --trimestre=todos",
     "  Rscript api/run_api.R --host=127.0.0.1 --port=8000",
     "",
     "Opciones:",
-    "  --anio=AAAA          Año del reporte (predeterminado: 2024).",
+    "  --anio=AAAA          Año del reporte (predeterminado: año actual).",
     "  --trimestre=VALOR    todos, 1, 2, 3, 4 o Q1, Q2, Q3, Q4.",
     "  --actualizar         Fuerza la descarga de las seis fuentes.",
     "  --sin-red            No intenta descargar ni actualizar archivos.",
@@ -101,7 +101,7 @@ if (modo_ui) {
   )
   source(file.path(raiz, "app.R"), local = globalenv(), encoding = "UTF-8")
 } else {
-  anio <- valor_opcion("--anio", "2024")
+  anio <- valor_opcion("--anio", format(Sys.Date(), "%Y"))
   trimestre <- valor_opcion("--trimestre", "todos")
   carpeta_salidas <- valor_opcion(
     "--salidas", Sys.getenv("REPORTE_SALIDAS_DIR", unset = file.path(raiz, "salidas"))

@@ -116,6 +116,7 @@ presentar_nombre <- function(x) {
   y <- tools::toTitleCase(tolower(x))
   reemplazos <- c(
     "At&T" = "AT&T", "At&t" = "AT&T", "Mcm" = "MCM", "Pcs" = "PCS", "Altan" = "Altán",
+    "Mvs" = "MVS", "Tv" = "TV", "Ultima" = "Última", "Cablevision" = "Cablevisión",
     "Telefonica" = "Telefónica", "Mexico" = "México",
     "Movil" = "Móvil", "Telefonia" = "Telefonía",
     "Comunicacion" = "Comunicación", "Innovacion" = "Innovación",
@@ -1085,7 +1086,7 @@ control_sin_datos <- function(especificacion, anio, trimestre) {
     Total_reporte = NA_real_,
     Grupos = 0L,
     Empresas_en_otros = 0L,
-    Otros_sin_identidad = 0L,
+    Otros_sin_identificacion = FALSE,
     Valores_imputados_cero = 0L,
     Valores_negativos = 0L,
     Filas_duplicadas_exactas = 0L,
@@ -1107,15 +1108,12 @@ preparar_tabla_fuente <- function(datos, especificacion, anio, trimestre) {
   }
   fuera <- periodo[!periodo$.GRUPO_CLAVE %in% especificacion$objetivos, , drop = FALSE]
   empresas_otros <- length(unique(fuera$K_EMPRESA[!is.na(fuera$K_EMPRESA) & nzchar(fuera$K_EMPRESA)]))
-  # Una clave genérica sin nombre no permite saber cuántas empresas agrupa.
-  # Conservar sus valores en Otros, sin inventar el conteo de la nota.
+  # Identifica registros de "Otros" que usan una clave genérica y no traen
+  # nombre de empresa. El importe se conserva y la nota del Word lo explica
+  # expresamente, en lugar de presentarlo como una empresa plenamente identificada.
   identidad_ausente <- (is.na(fuera$K_EMPRESA) | fuera$K_EMPRESA %in% c("", "C0000", "C9999")) &
     (is.na(fuera$EMPRESA) | !nzchar(trimws(fuera$EMPRESA)))
-  # La nota "Otros incluye X empresas" debe mostrarse siempre con un entero.
-  # Las filas sin identidad no inventan empresas: si no hay ninguna otra
-  # empresa identificable, se cuentan como un único grupo sin nombre.
-  otros_sin_identidad <- sum(identidad_ausente)
-  if (empresas_otros == 0L && otros_sin_identidad > 0L) empresas_otros <- 1L
+  otros_sin_identificacion <- any(identidad_ausente)
   control <- data.frame(
     Periodo = periodo_codigo(anio, trimestre),
     Seccion = especificacion$orden,
@@ -1126,19 +1124,23 @@ preparar_tabla_fuente <- function(datos, especificacion, anio, trimestre) {
     Total_reporte = total / especificacion$divisor,
     Grupos = nrow(resumen$por_grupo),
     Empresas_en_otros = empresas_otros,
-    Otros_sin_identidad = otros_sin_identidad,
+    Otros_sin_identificacion = otros_sin_identificacion,
     Valores_imputados_cero = sum(periodo$.VALOR_IMPUTADO),
     Valores_negativos = sum(periodo$.VALOR < 0),
     Filas_duplicadas_exactas = sum(duplicated(periodo)),
     stringsAsFactors = FALSE
   )
-  list(tabla = tabla, control = control, empresas_otros = empresas_otros)
+  list(
+    tabla = tabla, control = control, empresas_otros = empresas_otros,
+    otros_sin_identificacion = otros_sin_identificacion
+  )
 }
 
 preparar_tablas_periodo <- function(fuentes, anio, trimestre) {
   tablas <- vector("list", 6L)
   controles <- vector("list", 6L)
   empresas_otros <- integer(6L)
+  otros_sin_identificacion <- logical(6L)
   advertencias <- character()
   for (id in names(ESPECIFICACIONES_FUENTES)) {
     especificacion <- ESPECIFICACIONES_FUENTES[[id]]
@@ -1159,6 +1161,7 @@ preparar_tablas_periodo <- function(fuentes, anio, trimestre) {
         especificacion, anio, trimestre
       )
       empresas_otros[[especificacion$orden]] <- 0L
+      otros_sin_identificacion[[especificacion$orden]] <- FALSE
       next
     }
     resultado <- preparar_tabla_fuente(
@@ -1167,11 +1170,13 @@ preparar_tablas_periodo <- function(fuentes, anio, trimestre) {
     tablas[[especificacion$orden]] <- resultado$tabla
     controles[[especificacion$orden]] <- resultado$control
     empresas_otros[[especificacion$orden]] <- resultado$empresas_otros
+    otros_sin_identificacion[[especificacion$orden]] <- resultado$otros_sin_identificacion
   }
   list(
     tablas = tablas,
     control = do.call(rbind, controles),
     empresas_otros = empresas_otros,
+    otros_sin_identificacion = otros_sin_identificacion,
     advertencias = unique(advertencias)
   )
 }

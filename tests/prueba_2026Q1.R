@@ -47,7 +47,8 @@ stopifnot(identical(vapply(fuentes, function(x) nrow(x$datos), integer(1), USE.N
 preparado <- preparar_tablas_periodo(fuentes, 2026L, 1L)
 tablas <- preparado$tablas
 validar_entrada(tablas)
-stopifnot(preparado$empresas_otros[[5]] == 13L, is.na(preparado$empresas_otros[[6]]))
+stopifnot(preparado$empresas_otros[[5]] == 13L, preparado$empresas_otros[[6]] == 1L,
+          !preparado$otros_sin_identificacion[[5]], preparado$otros_sin_identificacion[[6]])
 stopifnot(all(abs(preparado$control$Total_reporte -
   c(141646269, 143080203, 175709.9943583, 31082469, 30082310, 29705462)) < 0.00001))
 
@@ -72,7 +73,9 @@ for (s in 5:6) {
 stopifnot(all(fuentes$tv_restringida$datos$.GRUPO_CLAVE[
   fuentes$tv_restringida$datos$K_GRUPO == 'C000'] == 'C000'))
 
-param <- crear_parametros_periodo(2026L, 1L, preparado$empresas_otros)
+param <- crear_parametros_periodo(
+  2026L, 1L, preparado$empresas_otros, preparado$otros_sin_identificacion
+)
 texto <- valores_texto(param, tablas, datos)
 stopifnot(identical(texto$S5_L1_NOMBRE, 'América Móvil'),
           identical(texto$S5_L1_PCT, '40.47%'),
@@ -107,7 +110,13 @@ if (!'--solo-datos' %in% commandArgs(trailingOnly = TRUE)) {
   stopifnot(sum(grepl('/descargas/datos/tabs/TD_', enlaces, fixed = TRUE)) == 12L,
             !grepl('-, con el -', texto_word, fixed = TRUE),
             !grepl('incluye 1 empresas', texto_word, fixed = TRUE),
-            !grepl('incluye NA', texto_word, fixed = TRUE))
+            !grepl('incluye NA', texto_word, fixed = TRUE),
+            grepl('MVS', texto_word, fixed = TRUE),
+            grepl('Internet y TV', texto_word, fixed = TRUE),
+            grepl('Última Milla', texto_word, fixed = TRUE),
+            grepl('Cablevisión', texto_word, fixed = TRUE),
+            grepl('11,452,815 accesos correspondientes a 1 empresa sin identificación de grupo económico',
+                  texto_word, fixed = TRUE))
   for (tabla_xml in xml2::xml_find_all(doc, './/w:tbl', ns)) {
     cabecera <- xml2::xml_find_first(tabla_xml, './w:tr', ns)
     for (celda in xml2::xml_find_all(cabecera, './w:tc', ns)) {
